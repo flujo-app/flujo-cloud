@@ -1,0 +1,6 @@
+node_modules/
+.flujo-cloud/
+*.snapshot
+*.journal.json
+.env
+.env.*

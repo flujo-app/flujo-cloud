@@ -1,0 +1,10 @@
+{
+  "name": "flujo-cloud",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Private Fly Machines bridge for FLUJO workspace workers",
+  "engines": { "node": ">=22" },
+  "bin": { "flujo-cloud": "bin/flujo-cloud.mjs" },
+  "scripts": { "test": "node --test", "smoke": "node bin/flujo-cloud.mjs --help" }
+}

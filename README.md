@@ -40,6 +40,31 @@ Because the current completion API routes by name, the bridge also rejects dupli
 
 `up` returns success only after authenticated `/api/worker/status` reports `ready` for the requested workspace and exact snapshot hash. Package/MCP bootstrap errors, unavailable authentication, or a different snapshot do not count as success. Readiness checks bootstrap state; use `call` with your representative flow to verify its model and tool dependencies end to end.
 
+## Three-worker GitHub MCP example
+
+`examples/parallel-github.mjs` clones one locally validated flow into three private Fly workers, then asks each to post one uniquely marked comment on an explicit dedicated test issue. The installed GitHub MCP must expose `github_rest_get` and `github_create_issue_comment` with the argument shapes used by `github-mcp-server-kosta@3.1.0`. Attach those tools to the selected flow so its snapshot includes the server and its portable installation plan. Store its GitHub token as a secret MCP environment variable in FLUJO before testing locally.
+
+Set `FLUJO_SNAPSHOT_CONTROL_TOKEN` and `FLUJO_CLOUD_CONTROL_TOKEN` as above. For a private issue, also set `FLUJO_GITHUB_AUDIT_TOKEN` to a token that can read that repository's issue comments; the helper uses it only for GET audits. `FLY_API_TOKEN` and `FLYCTL_PATH` remain optional. Credential values belong in environment variables or FLUJO's secret configuration, never command arguments.
+
+```text
+node examples/parallel-github.mjs prepare --target https://github.com/OWNER/TEST_REPO/issues/NUMBER --flow FLOW_ID --mcp INSTALLED_MCP_NAME --image REGISTRY/IMAGE@sha256:DIGEST --org YOUR_ORG --region iad --workspace test-cloud --source http://127.0.0.1:4200
+node examples/parallel-github.mjs provision --plan PATH_FROM_PREPARE
+node examples/parallel-github.mjs run --plan PATH_FROM_PREPARE
+node examples/parallel-github.mjs audit --plan PATH_FROM_PREPARE
+```
+
+Replace the issue placeholders, exact flow/server identifiers, and image with real values; the image must use a lowercase SHA-256 digest. `prepare` only writes a reviewable plan and requests under the ignored `.flujo-cloud/integration-runs` directory. `--directory PATH` selects another private output location. Optional `--conversation-id ID` continues the same saved conversation independently in each cloned worker; otherwise each receives a new conversation ID.
+
+`provision` captures and creates workers sequentially and allocates three paid Machines/volumes. `run` waits for all three journals to be ready, reserves all requests on disk, and dispatches the flow calls concurrently once. Each flow reads comments, creates its marker once if absent, and verifies it afterward. A read-only audit records exact marker counts, comment URLs, app names, and Machine IDs. This verifies the comments; inspect FLUJO's durable tool events separately to prove which MCP route executed them.
+
+If a call times out or returns an uncertain result, use `audit` and reconcile the conversation and issue before taking further action. The helper never automatically replays a dispatched request; keep its reservation files. Run files can contain private conversation results. When finished, clean up each owned worker with the existing command and its journal:
+
+```text
+node bin/flujo-cloud.mjs down --journal RUN_DIRECTORY/worker-1.journal.json
+node bin/flujo-cloud.mjs down --journal RUN_DIRECTORY/worker-2.journal.json
+node bin/flujo-cloud.mjs down --journal RUN_DIRECTORY/worker-3.journal.json
+```
+
 ## Transfer and ownership
 
 The bridge verifies the source ZIP's SHA-256, encrypts it using AES-256-GCM with a fresh random 32-byte key, and writes only the encrypted envelope to its temporary directory. The envelope is `{format:"flujo-workspace-encrypted",version:1,iv,tag,data}`, with base64 fields. The key and remote control token go to `fly secrets import` over stdin. The worker authenticates/decrypts the envelope before checking the plaintext hash.
@@ -65,6 +90,6 @@ On 2026-09-05, a private Fly worker running FLUJO commit `5330772856b76ae3661dc9
 
 After restarting the same Machine, the worker became ready with its prior conversation and local/cloud proof files intact. A second Astra call read both files through the filesystem MCP and completed successfully. Independent checks confirmed the Codex adapter had an empty API-key field, the copied auth file had mode `0600`, and an unauthenticated worker-status request returned HTTP 401.
 
-This smoke run verifies that particular workspace, login, image, and bundled MCP set. It does not guarantee indefinite credential refresh or portability of arbitrary MCP servers. The 19 automated tests use synthetic credentials and mocked Fly operations; they can run independently of the live account.
+This smoke run verifies that particular workspace, login, image, and bundled MCP set. It does not guarantee indefinite credential refresh or portability of arbitrary MCP servers. The automated tests use synthetic credentials and mocked Fly operations; they can run independently of the live account.
 
 Fly references: [Machines API](https://fly.io/docs/machines/api/machines-resource/), [Machine update](https://fly.io/docs/flyctl/machine-update/), [Machine exec](https://fly.io/docs/flyctl/machine-exec/), [private proxy](https://fly.io/docs/flyctl/proxy/), [SFTP upload](https://fly.io/docs/flyctl/ssh-sftp-put/), [secrets import](https://fly.io/docs/flyctl/secrets-import/).

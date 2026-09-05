@@ -6,5 +6,6 @@
   "description": "Private Fly Machines bridge for FLUJO workspace workers",
   "engines": { "node": ">=22" },
   "bin": { "flujo-cloud": "bin/flujo-cloud.mjs" },
+  "exports": { ".": "./lib/managed.mjs", "./bridge": "./lib/bridge.mjs" },
   "scripts": { "test": "node --test", "smoke": "node bin/flujo-cloud.mjs --help" }
 }

@@ -2,21 +2,36 @@
 import { parseArgs } from 'node:util';
 import { promises as fs } from 'node:fs';
 import { CloudBridge } from '../lib/bridge.mjs';
+import { ManagedCloud } from '../lib/managed.mjs';
 
 const help = `flujo-cloud — private FLUJO workers on Fly Machines
 
-up --app NAME --org SLUG --region REGION --workspace NAME
-   --image REGISTRY/IMAGE@sha256:DIGEST --journal PATH
-   [--source http://127.0.0.1:4200] [--auth-state copied-workspace]
+sources                         Discover native local FLUJO instances.
+workspaces [--source URL]        List workspaces on the selected instance.
+preflight --workspace NAME      Verify setup and compatible official image.
+up --workspace NAME [--flow ID_OR_NAME ...]
+   [--source URL] [--org SLUG] [--region iad] [--app NEW_NAME]
    [--memory-mb 2048] [--volume-gb 2] [--timeout-seconds 600]
-   [--max-snapshot-mib 256] [--flow FLOW_ID ...] [--flows ID1,ID2]
+list                            List managed deployment records.
+call WORKER --prompt TEXT        Run the worker's single selected flow.
+call WORKER --request FILE [--conversation-id ID] [--timeout-seconds 600]
+down WORKER                     Remove the owned deployment and saved credential.
 
-call --journal PATH --request FILE [--conversation-id ID] [--timeout-seconds 600]
+Native FLUJO discovery, compatible GHCR image selection, immutable digest pinning,
+worker names, journals and control credentials are managed automatically.
+Fly CLI must be installed and signed in. Multiple instances/organizations need
+an explicit selection. Use --approve-tools only for authorized unattended calls.
+
+Advanced/operator mode remains available with --journal PATH:
+up --app NAME --org SLUG --region REGION --workspace NAME
+   --image REGISTRY/IMAGE@sha256:DIGEST --journal PATH [--source URL]
+call --journal PATH --request FILE
 down --journal PATH
 
-up requires FLUJO_SNAPSHOT_CONTROL_TOKEN and FLUJO_CLOUD_CONTROL_TOKEN in the
-environment. call requires FLUJO_CLOUD_CONTROL_TOKEN. Fly uses its existing
-login or FLY_API_TOKEN; FLYCTL_PATH can select the flyctl executable.
+Operator mode uses the existing source/worker control environment variables.
+--image supplies an explicit immutable custom image; --channel selects an
+official compatible worker channel. FLUJO_CLOUD_HOME overrides private CLI state.
+FLYCTL_PATH and FLY_API_TOKEN remain optional overrides.
 
 up provisions paid resources. down destroys only the dedicated journaled app.
 No command prints credentials. call writes the flow response to stdout.
@@ -27,38 +42,56 @@ try {
     allowPositionals: true,
     options: Object.fromEntries([
       'app', 'org', 'region', 'workspace', 'image', 'journal', 'source', 'auth-state',
-      'memory-mb', 'volume-gb', 'timeout-seconds', 'max-snapshot-mib', 'request', 'conversation-id', 'flows',
+      'memory-mb', 'volume-gb', 'timeout-seconds', 'max-snapshot-mib', 'request', 'conversation-id', 'flows', 'channel', 'prompt',
     ].map((name) => [name, { type: 'string' }]).concat([
-      ['flow', { type: 'string', multiple: true }], ['help', { type: 'boolean', short: 'h' }],
+      ['flow', { type: 'string', multiple: true }], ['help', { type: 'boolean', short: 'h' }], ['approve-tools', { type: 'boolean' }],
     ])),
   });
   if (values.help || positionals.length === 0) {
     process.stdout.write(help);
   } else {
-    if (positionals.length !== 1 || !['up', 'call', 'down'].includes(positionals[0])) throw new Error('Choose up, call, or down. Use --help for usage.');
-    if (!values.journal) throw new Error('--journal is required.');
-    const bridge = new CloudBridge({ progress: (message) => process.stderr.write(`${message}\n`) });
     const command = positionals[0];
+    if (!['sources', 'workspaces', 'preflight', 'up', 'list', 'call', 'down'].includes(command)
+      || positionals.length > (['call', 'down'].includes(command) && !values.journal ? 2 : 1)) throw new Error('Invalid command. Use --help for usage.');
+    const progress = (message) => process.stderr.write(`${message}\n`);
+    const managed = new ManagedCloud({ progress });
+    const operator = Boolean(values.journal);
+    if (operator && !['up', 'call', 'down'].includes(command)) throw new Error('--journal is only supported with up, call or down.');
+    const bridge = operator ? new CloudBridge({ progress }) : null;
     const timeoutMs = Number(values['timeout-seconds'] ?? 600) * 1000;
     let result;
-    if (command === 'up') {
-      result = await bridge.up({
+    if (command === 'sources') result = await managed.sources();
+    else if (command === 'workspaces') result = await managed.workspaces({ source: values.source });
+    else if (command === 'list') result = await managed.list();
+    else if (command === 'up' || command === 'preflight') {
+      const options = {
         app: values.app, org: values.org, region: values.region, workspace: values.workspace,
         image: values.image, journal: values.journal, source: values.source, authState: values['auth-state'],
+        channel: values.channel,
         memoryMb: values['memory-mb'], volumeGb: values['volume-gb'], timeoutMs,
         maxSnapshotBytes: Number(values['max-snapshot-mib'] ?? 256) * 1024 * 1024,
         flowIds: [...(values.flow ?? []), ...(values.flows ? values.flows.split(',').map((value) => value.trim()) : [])],
-      });
+      };
+      result = command === 'preflight' ? await managed.preflight(options) : operator ? await bridge.up(options) : await managed.up(options);
     } else if (command === 'call') {
-      if (!values.request) throw new Error('--request must name a JSON request file.');
-      const stat = await fs.stat(values.request);
-      if (!stat.isFile() || stat.size > 16 * 1024 * 1024) throw new Error('Request file must be a regular JSON file smaller than 16 MiB.');
+      if (Boolean(values.request) === Boolean(values.prompt)) throw new Error('Provide exactly one of --request FILE or --prompt TEXT.');
       let request;
-      try { request = JSON.parse(await fs.readFile(values.request, 'utf8')); }
-      catch { throw new Error('Request file is not valid JSON.'); }
-      const response = await bridge.call({ journal: values.journal, request, conversationId: values['conversation-id'], timeoutMs });
+      if (values.request) {
+        const stat = await fs.stat(values.request);
+        if (!stat.isFile() || stat.size > 16 * 1024 * 1024) throw new Error('Request file must be a regular JSON file smaller than 16 MiB.');
+        try { request = JSON.parse(await fs.readFile(values.request, 'utf8')); }
+        catch { throw new Error('Request file is not valid JSON.'); }
+      } else {
+        if (Buffer.byteLength(values.prompt) > 1024 * 1024 || values.flow?.length > 1) throw new Error('Use a prompt below 1 MiB and at most one flow.');
+        request = { ...(values.flow?.[0] ? { model: values.flow[0] } : {}), stream: false,
+          messages: [{ role: 'user', content: values.prompt }] };
+      }
+      if (!request || typeof request !== 'object' || Array.isArray(request)) throw new Error('Request must be a JSON object.');
+      if (values['approve-tools']) request.metadata = { ...request.metadata, requireApproval: 'false' };
+      const args = { request, conversationId: values['conversation-id'], timeoutMs };
+      const response = operator ? await bridge.call({ journal: values.journal, ...args }) : await managed.call(positionals[1], args);
       process.stdout.write(`${response.body}\n`);
-    } else result = await bridge.down({ journal: values.journal });
+    } else result = operator ? await bridge.down({ journal: values.journal }) : await managed.down(positionals[1]);
     if (result) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   }
 } catch (error) {

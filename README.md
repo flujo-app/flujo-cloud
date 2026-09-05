@@ -86,6 +86,8 @@ If `up` fails, its journal remains for `down`; the bridge does not hide failures
 
 ## Validation
 
+The [three-worker GitHub MCP validation](docs/github-mcp-validation-2026-09-05.md) also passed on 2026-09-05: the locally tested custom server and encrypted GitHub credential were cloned to three Linux Machines. Each Astra flow created and read back one dedicated issue comment through MCP; durable execution timestamps showed 48.970 seconds of overlap. All three used the copied Codex subscription login without an API key.
+
 On 2026-09-05, a private Fly worker running FLUJO commit `5330772856b76ae3661dc9b0c8ec079979b8e265` restored an encrypted `test-cloud` snapshot and executed its existing flow with `gpt-6-astra` using copied Codex subscription authentication, without an API key. The run used all four bundled MCP servers: filesystem read/write, FLUJO model inspection, Bash on Linux, and browser navigation. The existing conversation contained the completed cloud run.
 
 After restarting the same Machine, the worker became ready with its prior conversation and local/cloud proof files intact. A second Astra call read both files through the filesystem MCP and completed successfully. Independent checks confirmed the Codex adapter had an empty API-key field, the copied auth file had mode `0600`, and an unauthenticated worker-status request returned HTTP 401.

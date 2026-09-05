@@ -111,7 +111,9 @@ Create a request file, for example `.flujo-cloud/request.json`:
   "model": "default-agent-flujo",
   "stream": false,
   "metadata": {
-    "conversationId": "cloud-example-001"
+    "conversationId": "cloud-example-001",
+    "appendMessages": "true",
+    "requireApproval": "false"
   },
   "messages": [
     { "role": "user", "content": "Run the agreed test using the tools configured on this flow and verify the result." }
@@ -125,9 +127,9 @@ node bin/flujo-cloud.mjs call --journal .flujo-cloud/test-worker.journal.json --
 
 `request.model` is the exact **flow ID**, not the provider model name. The bridge resolves that ID to the unique flow name used by FLUJO's current completion endpoint and adds `metadata.flujo: "true"` so FLUJO executes its tools inside the worker. Duplicate flow names are rejected. Model choice comes from the restored flow configuration.
 
-The existing flow's approval policy still applies. For an explicitly authorized unattended test, the example uses the string metadata value `requireApproval: "false"`; the generic bridge does not silently change that policy. A real flow should receive a concrete task and outcome to verify.
+FLUJO's completion API defaults to unattended tool execution. This example makes that setting explicit with `requireApproval: "false"`. The operator bridge preserves request metadata; it has no approval/respond command for a request that explicitly enables approval. Give the flow a concrete task and outcome to verify.
 
-The flow response is written to stdout. Redirect it to a private result file if needed; it can contain conversation/tool data. Streaming responses are buffered until completion. `--conversation-id ID` overrides the request's conversation ID to address the worker's saved conversation. Later source changes are not synchronized into it.
+The flow response is written to stdout. Redirect it to a private result file if needed; it can contain conversation/tool data. Streaming responses are buffered until completion. `--conversation-id ID` overrides the request's conversation ID to address the worker's saved conversation. `appendMessages: "true"` appends the supplied new messages; without it, the API treats them as the active transcript. Later source changes are not synchronized into the worker.
 
 Verify the external effect and the durable worker conversation events. A ready worker and an assistant's prose are not sufficient evidence of successful execution. After deployment the source FLUJO process does not need to remain running for `call`.
 

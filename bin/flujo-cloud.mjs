@@ -3,6 +3,7 @@ import { parseArgs } from 'node:util';
 import { promises as fs } from 'node:fs';
 import { CloudBridge } from '../lib/bridge.mjs';
 import { ManagedCloud } from '../lib/managed.mjs';
+import { buildPromptRequest } from '../lib/requests.mjs';
 
 const help = `flujo-cloud — private FLUJO workers on Fly Machines
 
@@ -20,7 +21,8 @@ down WORKER                     Remove the owned deployment and saved credential
 Native FLUJO discovery, compatible GHCR image selection, immutable digest pinning,
 worker names, journals and control credentials are managed automatically.
 Fly CLI must be installed and signed in. Multiple instances/organizations need
-an explicit selection. Use --approve-tools only for authorized unattended calls.
+an explicit selection. Calls run configured tools unattended; submit only tasks
+and external actions you have authorized. Prompts append a new conversation turn.
 
 Advanced/operator mode remains available with --journal PATH:
 up --app NAME --org SLUG --region REGION --workspace NAME
@@ -44,7 +46,7 @@ try {
       'app', 'org', 'region', 'workspace', 'image', 'journal', 'source', 'auth-state',
       'memory-mb', 'volume-gb', 'timeout-seconds', 'max-snapshot-mib', 'request', 'conversation-id', 'flows', 'channel', 'prompt',
     ].map((name) => [name, { type: 'string' }]).concat([
-      ['flow', { type: 'string', multiple: true }], ['help', { type: 'boolean', short: 'h' }], ['approve-tools', { type: 'boolean' }],
+      ['flow', { type: 'string', multiple: true }], ['help', { type: 'boolean', short: 'h' }],
     ])),
   });
   if (values.help || positionals.length === 0) {
@@ -82,12 +84,9 @@ try {
         try { request = JSON.parse(await fs.readFile(values.request, 'utf8')); }
         catch { throw new Error('Request file is not valid JSON.'); }
       } else {
-        if (Buffer.byteLength(values.prompt) > 1024 * 1024 || values.flow?.length > 1) throw new Error('Use a prompt below 1 MiB and at most one flow.');
-        request = { ...(values.flow?.[0] ? { model: values.flow[0] } : {}), stream: false,
-          messages: [{ role: 'user', content: values.prompt }] };
+        request = buildPromptRequest({ prompt: values.prompt, flowIds: values.flow });
       }
       if (!request || typeof request !== 'object' || Array.isArray(request)) throw new Error('Request must be a JSON object.');
-      if (values['approve-tools']) request.metadata = { ...request.metadata, requireApproval: 'false' };
       const args = { request, conversationId: values['conversation-id'], timeoutMs };
       const response = operator ? await bridge.call({ journal: values.journal, ...args }) : await managed.call(positionals[1], args);
       process.stdout.write(`${response.body}\n`);

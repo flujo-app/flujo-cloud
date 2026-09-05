@@ -27,7 +27,7 @@ node bin/flujo-cloud.mjs list
 node bin/flujo-cloud.mjs down WORKER
 ```
 
-The flow's approval policy remains in effect. Add `--approve-tools` only when you have explicitly authorized the requested unattended tool actions. `down` deletes the owned worker and its volume, then removes its saved control credential. `list` reports local deployment records, rather than polling the live fleet.
+Calls execute the configured flow tools unattended. `--conversation-id ID` continues a conversation with a new prompt turn. `down` deletes the owned worker and its volume, then removes its saved control credential. `list` reports local deployment records, rather than polling the live fleet.
 
 **Publication status:** the managed path and official `cloud-worker` publishing workflow are implemented, but publication and a live run of a compatible official image are still pending validation. `preflight` stops if that image is missing or incompatible. The earlier [local and three-worker GitHub MCP test](docs/github-mcp-validation-2026-09-05.md) passed with a separately built immutable image; it does not establish that the new official-image path has passed.
 

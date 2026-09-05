@@ -8,6 +8,7 @@ import { CloudBridge, validateOptions } from '../lib/bridge.mjs';
 import { sha256, encryptSnapshot } from '../lib/envelope.mjs';
 import { Journal } from '../lib/journal.mjs';
 import { captureSnapshot } from '../lib/snapshot.mjs';
+import { buildPromptRequest } from '../lib/requests.mjs';
 
 const sourceToken = 'synthetic_source_control_token_0123456789';
 const workerToken = 'synthetic_worker_control_token_0123456789';
@@ -205,6 +206,40 @@ test('call refuses duplicate flow names instead of accidentally executing anothe
   state.duplicateFlowNames();
   await assert.rejects(state.bridge.call({ journal: state.options.journal, request: { model: 'selected-flow' } }, env), /ambiguous/);
   assert.ok(!state.requests.some((request) => request.url.pathname === '/v1/chat/completions'));
+});
+
+test('prompt continuation sends only its new turn with append mode through scoped flow routing', async (t) => {
+  const state = await fixture(t);
+  const flowId = 'default-agent-flujo';
+  await state.bridge.up({ ...state.options, flowIds: [flowId] }, env);
+  const request = buildPromptRequest({ prompt: 'Continue with the next step.', flowIds: [flowId] });
+  await state.bridge.call({ journal: state.options.journal, request, conversationId: 'existing-conversation' }, env);
+  const completion = state.requests.find((entry) => entry.url.pathname === '/v1/chat/completions');
+  assert.deepEqual(JSON.parse(completion.init.body), {
+    model: 'flow-Synthetic Flow', stream: false,
+    messages: [{ role: 'user', content: 'Continue with the next step.' }],
+    metadata: { appendMessages: 'true', flujo: 'true', conversationId: 'existing-conversation' },
+  });
+  assert.equal(completion.init.headers['x-flujo-workspace'], state.options.workspace);
+  assert.ok(state.requests.some((entry) => entry.url.pathname === `/api/flow/${flowId}`));
+  assert.equal(request.model, flowId);
+  assert.equal(request.metadata.conversationId, undefined);
+});
+
+test('raw request history and explicit approval/append metadata survive worker forwarding unchanged', async (t) => {
+  const state = await fixture(t);
+  const flowId = 'default-agent-flujo';
+  await state.bridge.up({ ...state.options, flowIds: [flowId] }, env);
+  const request = { model: flowId, stream: false,
+    messages: [{ role: 'user', content: 'Prior question' }, { role: 'assistant', content: 'Prior answer' },
+      { role: 'user', content: 'New question' }],
+    metadata: { requireApproval: 'true', appendMessages: 'false', conversationId: 'raw-conversation', custom: 'preserved' } };
+  const original = structuredClone(request);
+  await state.bridge.call({ journal: state.options.journal, request }, env);
+  const completion = state.requests.find((entry) => entry.url.pathname === '/v1/chat/completions');
+  assert.deepEqual(JSON.parse(completion.init.body), { ...original, model: 'flow-Synthetic Flow',
+    metadata: { ...original.metadata, flujo: 'true' } });
+  assert.deepEqual(request, original);
 });
 
 test('wrong resolved image digest blocks upload while owned cleanup remains available', async (t) => {

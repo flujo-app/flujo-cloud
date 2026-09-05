@@ -77,9 +77,9 @@ node bin/flujo-cloud.mjs call WORKER --prompt "Inspect the workspace and report 
 
 A prompt automatically uses the worker's single selected flow. For multiple selected flows, pass `--flow EXACT_FLOW_ID` on `call`, or supply `--request FILE` with `model` set to that exact flow ID. Model/provider selection still comes from the flow's configuration.
 
-The flow's approval policy remains in effect. For an explicitly authorized unattended task, add `--approve-tools`. This sets the existing FLUJO approval override for that request; use it only after authorizing the tools and external effects described in the prompt.
+Calls execute the configured flow tools unattended, using FLUJO's completion API default. There is no interactive approval client attached to a worker. An advanced request with `metadata.requireApproval: "true"` can pause or wait for approval; the CLI has no approval/respond command.
 
-`--conversation-id ID` addresses an existing or chosen conversation in this worker. The response goes to stdout and may contain private conversation/tool data. Streaming responses are currently buffered until completion. Source FLUJO does not need to keep running after deployment.
+`--conversation-id ID` addresses an existing or chosen conversation in this worker. A `--prompt` call appends one new user turn and preserves its existing history. JSON request files retain FLUJO's API semantics: include `metadata.appendMessages: "true"` when the file contains only new messages; without that setting the supplied messages represent the active transcript. The response goes to stdout and may contain private conversation/tool data. Streaming responses are currently buffered until completion. Source FLUJO does not need to keep running after deployment.
 
 Check actual results and external effects. If a request times out after a possible write, inspect its durable conversation and external outcome before retrying. A new `call` is a new dispatch; the generic CLI does not provide exactly-once execution or automatically replay uncertain requests. The [parallel GitHub acceptance helper](operator-guide.md#6-run-the-three-worker-github-acceptance-example) adds durable reservations and comment-marker audits for that particular test.
 

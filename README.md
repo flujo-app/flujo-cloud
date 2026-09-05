@@ -4,6 +4,15 @@ A small bridge that runs the existing FLUJO execution engine on a private Fly Ma
 
 This package is separate from FLUJO. It does not implement another flow engine, expose a public service, or synchronize changes back to the local workspace.
 
+## Documentation
+
+- [Deployment diagram and architecture](docs/architecture.md): repository responsibilities, capture/restore, package reuse, credential transfer and persistence.
+- [Deployment and operations guide](docs/deployment.md): local setup, image requirements, CLI commands, GitHub MCP example, troubleshooting and cleanup.
+- [Verified local + three-worker GitHub MCP test](docs/github-mcp-validation-2026-09-05.md): actual comments, Machine IDs, execution overlap and test limits.
+- [Editable deployment diagram](docs/diagrams/deployment.mmd) and [SVG diagram](docs/diagrams/deployment.svg).
+
+The CLI and Fly orchestration live in this private `flujo-app/flujo-cloud` repository. Snapshot/restore, portable MCP package support and the execution engine live in [mario-andreschak/FLUJO](https://github.com/mario-andreschak/FLUJO). The bridge deploys the FLUJO image and invokes its existing APIs.
+
 ## Requirements
 
 - Node.js 22+ and an authenticated `flyctl` installation. `FLYCTL_PATH` may point to its executable; Fly also accepts `FLY_API_TOKEN` from the environment.

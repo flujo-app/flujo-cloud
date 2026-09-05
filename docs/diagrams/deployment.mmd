@@ -1,0 +1,31 @@
+%%{init: {"theme":"base","fontFamily":"Arial","htmlLabels":false,"themeCSS":".edgeLabel rect { opacity: 1 !important; }","themeVariables":{"fontFamily":"Arial","fontSize":"16px","clusterBkg":"#f7f9fc","clusterBorder":"#b8c6d5","lineColor":"#526578","primaryTextColor":"#19324b","edgeLabelBackground":"#ffffff"},"flowchart":{"htmlLabels":false,"wrappingWidth":360,"curve":"linear","nodeSpacing":35,"rankSpacing":50}}}%%
+flowchart TB
+  subgraph local["LOCAL COMPUTER"]
+    source["FLUJO source workspace<br/>Flows · models · conversations · userdata<br/>MCP configuration + supported credentials"]
+    bridge["flujo-cloud CLI · separate repository<br/>up · call · down<br/>Local journal tracks each deployment"]
+    source -->|"1. Authenticated snapshot capture over loopback"| bridge
+  end
+
+  bootstrap["2. PROVISION EACH WORKER<br/>Fly API + flyctl create app, Machine and volume<br/>Pinned FLUJO image from registry<br/>Snapshot key + worker bearer via Fly secrets<br/>AES-GCM encrypted snapshot via SFTP"]
+  calls["4. RUN FLOWS IN PARALLEL<br/>Authenticated private Fly tunnels"]
+
+  subgraph fleet["PRIVATE FLY NETWORK · NO PUBLIC SERVICES"]
+    direction LR
+    w1["APP 1 · MACHINE 1<br/>FLUJO execution engine<br/>Codex + MCP runtimes<br/>Own persistent workspace volume"]
+    w2["APP 2 · MACHINE 2<br/>FLUJO execution engine<br/>Codex + MCP runtimes<br/>Own persistent workspace volume"]
+    w3["APP 3 · MACHINE 3<br/>FLUJO execution engine<br/>Codex + MCP runtimes<br/>Own persistent workspace volume"]
+  end
+
+  services["EXTERNAL SERVICES<br/>Codex / model provider · GitHub API<br/>Other configured MCP services"]
+
+  bridge -.-> bootstrap
+  bootstrap -.->|"3. Restore state, reinstall MCP packages, verify readiness"| fleet
+  bridge ==> calls ==> fleet
+  fleet -->|"Outbound model requests and MCP calls"| services
+
+  classDef control fill:#e9f1ff,stroke:#3169a5,color:#15375b
+  classDef worker fill:#e6f5ef,stroke:#34806a,color:#194d3e
+  classDef external fill:#fff4df,stroke:#ac7c2b,color:#684612
+  class source,bridge,bootstrap,calls control
+  class w1,w2,w3 worker
+  class services external

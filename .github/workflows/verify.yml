@@ -13,15 +13,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  windows-acl-diagnostic:
-    runs-on: windows-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: node scripts/diagnose-windows-acl.mjs
   test:
     strategy:
       fail-fast: false

@@ -33,6 +33,50 @@ test('private JSON round-trips with real OS protection, atomic replacement, and 
   assert.deepEqual(await fs.readdir(state.directory), ['synthetic.json']);
 });
 
+test('Windows protection normalizes a new directory to user ownership, including elevated token owners', { skip: process.platform !== 'win32' }, async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'flujo-private-files-test-'));
+  t.after(async () => {
+    assert.ok(path.basename(root).startsWith('flujo-private-files-test-'));
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  const inspect = async (restoreTokenOwner = false) => {
+    const script = String.raw`
+      $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+      $acl = [IO.Directory]::GetAccessControl([Environment]::GetEnvironmentVariable('FLUJO_PRIVATE_PATH'))
+      if ([Environment]::GetEnvironmentVariable('FLUJO_TEST_TOKEN_OWNER') -eq '1') {
+        $acl.SetOwner($identity.Owner)
+        [IO.Directory]::SetAccessControl([Environment]::GetEnvironmentVariable('FLUJO_PRIVATE_PATH'), $acl)
+        $acl = [IO.Directory]::GetAccessControl([Environment]::GetEnvironmentVariable('FLUJO_PRIVATE_PATH'))
+      }
+      $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier])
+      [Console]::Out.Write(('{"user":' + ($owner.Value -eq $identity.User.Value).ToString().ToLowerInvariant() + ',"token":' + ($owner.Value -eq $identity.Owner.Value).ToString().ToLowerInvariant() + '}'))
+    `;
+    const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+    const { stdout } = await promisify(execFile)(path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
+        windowsHide: true, timeout: 15_000, maxBuffer: 1024,
+        env: { SystemRoot: systemRoot, WINDIR: systemRoot, FLUJO_PRIVATE_PATH: root,
+          FLUJO_TEST_TOKEN_OWNER: restoreTokenOwner ? '1' : '0' },
+      });
+    return JSON.parse(stdout);
+  };
+  const before = await inspect();
+  assert.ok(before.user || before.token);
+  await ensurePrivateDirectory(root);
+  assert.equal((await inspect()).user, true);
+  await assertPrivateDirectory(root);
+  if (!before.user) {
+    // Even with a private DACL, a read must not silently adopt group ownership.
+    assert.equal((await inspect(true)).user, false);
+    await assert.rejects(assertPrivateDirectory(root), /unsafe/);
+    await ensurePrivateDirectory(root);
+    assert.equal((await inspect()).user, true);
+  }
+  const filename = path.join(root, 'synthetic.json');
+  await writePrivateJson(filename, { synthetic: true });
+  assert.deepEqual(await readPrivateJson(filename), { synthetic: true });
+});
+
 test('read rejects broad Unix permissions or Windows ACL grants without echoing file contents', async (t) => {
   const state = await fixture(t);
   const token = 'synthetic-must-not-appear-in-errors';

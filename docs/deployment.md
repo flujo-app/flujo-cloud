@@ -6,9 +6,17 @@ The complete managed lifecycle has been verified: automatic official image selec
 
 ## 1. Prepare FLUJO locally
 
-Use an updated native checkout of [FLUJO `main`](https://github.com/mario-andreschak/FLUJO), containing local-instance discovery and worker compatibility metadata. The published `flujo-ai` npm release does not yet include discovery as of September 6, 2026; installing that release alone is not enough for this managed path.
+Use native FLUJO 3.45.2. Local-instance discovery and worker compatibility metadata first shipped in the npm launcher with 3.45.1, but a later Windows consumer test found that initialization could return `500` from `/api/init` even when discovery succeeded. Version 3.45.2 includes the Windows startup fix. Start the prebuilt package directly:
 
-For a fresh source checkout:
+```text
+npx flujo-ai@3.45.2
+```
+
+This needs no FLUJO Git checkout or local build. The npm launcher stores data in `~/.flujo` by default and registers the running instance automatically. It does not automatically import workspaces from another checkout; configure the workspace in this instance and verify it with `workspaces`. Your MCP servers may still need their own system dependencies. npm releases before 3.45.1 lack the discovery support required by the managed path.
+
+A compatible official worker image must also be published for the source version; `preflight` verifies that separately. npm installation alone does not establish cloud-image compatibility. The September 6 acceptance run used an updated native checkout before the 3.45.1 npm release.
+
+Alternatively, use an updated native checkout of [FLUJO `main`](https://github.com/mario-andreschak/FLUJO) containing the same Windows startup fix:
 
 ```text
 git clone https://github.com/mario-andreschak/FLUJO.git FLUJO-cloud-source
@@ -18,7 +26,7 @@ npm run build:mcp
 npm run dev
 ```
 
-For an existing checkout, update it and restart FLUJO through the normal launcher. A production build can use `npm run build` followed by `npm start`. These launchers create the source control token and private discovery record automatically, so the bridge needs no manually supplied token or port. Keep the source running through capture; the worker operates independently afterward.
+For an existing checkout, update it and restart FLUJO through the normal launcher. A production build can use `npm run build` followed by `npm start`. Both the npm and checkout launchers create the source control token and private discovery record automatically, so the bridge needs no manually supplied token or port. Keep the source running through capture; the worker operates independently afterward.
 
 Automatic discovery applies to native localhost mode. Capture is unavailable in network/public exposure: switch the source to localhost mode first. Older or container installations with a supported loopback snapshot API can use the [operator interface](operator-guide.md).
 

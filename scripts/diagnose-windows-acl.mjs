@@ -21,7 +21,18 @@ const instrument = script => script
 const direct = original
   .replace('$item = Get-Item -LiteralPath $p -Force', '$isDirectory = ([IO.File]::GetAttributes($p) -band [IO.FileAttributes]::Directory) -ne 0; $item = if ($isDirectory) { [IO.DirectoryInfo]::new($p) } else { [IO.FileInfo]::new($p) }')
   .replaceAll('$item.PSIsContainer', '$isDirectory')
-  .replaceAll('$acl = Get-Acl -LiteralPath $p', '$acl = if ($isDirectory) { [IO.Directory]::GetAccessControl($p) } else { [IO.File]::GetAccessControl($p) }');
+  .replaceAll('$acl = Get-Acl -LiteralPath $p', '$acl = if ($isDirectory) { [IO.Directory]::GetAccessControl($p) } else { [IO.File]::GetAccessControl($p) }')
+  .replace('  if ($acl.GetOwner', `  $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier])
+  $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+  if ($owner.Value -eq $identity.User.Value) { [Console]::Out.WriteLine('stage:owner-user') }
+  if ($owner.Value -eq $identity.Owner.Value) { [Console]::Out.WriteLine('stage:owner-token') }
+  if ($owner.IsWellKnown([Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid)) { [Console]::Out.WriteLine('stage:owner-administrators') }
+  if ($identity.Owner.IsWellKnown([Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid)) { [Console]::Out.WriteLine('stage:token-owner-administrators') }
+  if ($acl.GetOwner`);
+const normalizeOwner = direct.replace(
+  "if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { throw 'unsafe' }",
+  "if ($owner.Value -ne $sid.Value) { if ($owner.Value -ne $identity.Owner.Value) { throw 'unsafe' }; $acl.SetOwner($sid) }",
+);
 
 try {
   const profile = path.join(root, 'profile');
@@ -32,12 +43,8 @@ try {
   const cases = [
     { name: 'startup-only', script: "[Console]::Out.WriteLine('stage:startup'); [Console]::Out.Write('private')" },
     { name: 'original', script: instrument(original) },
-    { name: 'closed-stdin', script: instrument(original), closeStdin: true },
-    { name: 'system-modules', script: instrument(original), env: { PSModulePath: path.join(psHome, 'Modules') } },
-    { name: 'synthetic-runtime-folders', script: instrument(original), env: {
-      TEMP: root, TMP: root, USERPROFILE: profile, LOCALAPPDATA: local, APPDATA: roaming,
-    } },
     { name: 'direct-dotnet', script: instrument(direct) },
+    { name: 'direct-normalize-token-owner', script: instrument(normalizeOwner) },
   ];
   for (const [index, item] of cases.entries()) {
     const filename = path.join(root, `case-${index}`);

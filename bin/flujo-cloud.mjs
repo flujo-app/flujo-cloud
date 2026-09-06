@@ -36,7 +36,8 @@ official compatible worker channel. FLUJO_CLOUD_HOME overrides private CLI state
 FLYCTL_PATH and FLY_API_TOKEN remain optional overrides.
 
 up provisions paid resources. down destroys only the dedicated journaled app.
-No command prints credentials. call writes the flow response to stdout.
+Status output omits controller credentials. call writes potentially private
+flow results to stdout.
 `;
 
 try {

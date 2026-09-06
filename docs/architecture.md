@@ -43,7 +43,7 @@ Only a missing tag falls through. A found image with invalid digest, identity or
 
 The FLUJO `Publish Cloud Worker Image` workflow builds and tests a main-branch Linux image, then publishes that tested image under revision, application-version and current `cloud-worker` tags. Its offline production smoke uses synthetic state and a mock model, exercises restore/MCP/flow execution and persistence, and needs no provider credentials. This workflow is independent of npm/release publishing and does not advance release `latest`.
 
-Publication of a compatible official image and a live managed deployment are still pending validation. The [earlier GitHub MCP proof](github-mcp-validation-2026-09-05.md) used an explicitly built private image and remains evidence for that recorded implementation/run. The managed resolver does not silently replace a missing compatible image with another release.
+[Workflow run 33999689534](https://github.com/mario-andreschak/FLUJO/actions/runs/33999689534) successfully published worker revision `c55ce4410bebc7bb7db66d02144914d5ad068d5a` after its offline production smoke. The verified Linux image digest is `sha256:8b5da896c92be52aadd0ad866cf2821d780d81249b9a3a29de80a7b46a0cb709`. The [managed CLI validation](managed-cli-validation-2026-09-06.md) records automatic selection, a real Astra/MCP flow with the local source stopped, conversation persistence across a Machine restart, and owned cleanup. The [earlier three-worker proof](github-mcp-validation-2026-09-05.md) remains separate evidence for parallel execution. The managed resolver does not silently replace a missing compatible image with another release.
 
 ## Capture, restore and execution
 

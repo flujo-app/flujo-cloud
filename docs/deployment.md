@@ -2,11 +2,25 @@
 
 Start with a working local FLUJO flow. The CLI discovers the native instance, chooses a compatible official image, creates a private Fly worker and saves what it needs to call or remove that worker later.
 
-The compatible official image publication and its live managed deployment are still pending validation. The implemented workflow is described below; `preflight` refuses deployment while the required image is unavailable or incompatible. The [recorded three-worker test](github-mcp-validation-2026-09-05.md) used the earlier explicit-image operator path.
+The complete managed lifecycle has been verified: automatic official image selection, an Astra flow using GitHub MCP and filesystem tools with the local source stopped, conversation continuation after a Machine restart, and owned cleanup. See the [September 6 validation record](managed-cli-validation-2026-09-06.md). `preflight` still refuses missing or incompatible images. The earlier [three-worker test](github-mcp-validation-2026-09-05.md) used the explicit-image operator path.
 
 ## 1. Prepare FLUJO locally
 
-Use an updated native FLUJO version containing local-instance discovery and worker compatibility metadata. Start it through its normal Git/npm launcher. The launcher creates the source control token and private discovery record automatically; restart an older running process after updating. Automatic discovery applies to native localhost mode. Capture is unavailable in network/public exposure: switch the source to localhost mode first. Older or container installations with a supported loopback snapshot API can use the [operator interface](operator-guide.md).
+Use an updated native checkout of [FLUJO `main`](https://github.com/mario-andreschak/FLUJO), containing local-instance discovery and worker compatibility metadata. The published `flujo-ai` npm release does not yet include discovery as of September 6, 2026; installing that release alone is not enough for this managed path.
+
+For a fresh source checkout:
+
+```text
+git clone https://github.com/mario-andreschak/FLUJO.git FLUJO-cloud-source
+cd FLUJO-cloud-source
+npm ci
+npm run build:mcp
+npm run dev
+```
+
+For an existing checkout, update it and restart FLUJO through the normal launcher. A production build can use `npm run build` followed by `npm start`. These launchers create the source control token and private discovery record automatically, so the bridge needs no manually supplied token or port. Keep the source running through capture; the worker operates independently afterward.
+
+Automatic discovery applies to native localhost mode. Capture is unavailable in network/public exposure: switch the source to localhost mode first. Older or container installations with a supported loopback snapshot API can use the [operator interface](operator-guide.md).
 
 In FLUJO:
 
@@ -30,7 +44,7 @@ cd flujo-cloud
 node bin/flujo-cloud.mjs --help
 ```
 
-There are no npm dependencies to install. Run the CLI with Node from this checkout. It finds `flyctl` in its conventional `~/.fly/bin` location or on PATH and uses the existing Fly login.
+There are no npm dependencies to install. This private bridge is not published as a public npm package; run the CLI with Node from the authorized Git checkout. It finds `flyctl` in its conventional `~/.fly/bin` location or on PATH and uses the existing Fly login.
 
 ## 3. Discover and check the source
 
@@ -40,7 +54,7 @@ node bin/flujo-cloud.mjs workspaces
 node bin/flujo-cloud.mjs preflight --workspace test-cloud --flow FLUJO
 ```
 
-`sources` lists verified native instances without their credentials. `workspaces` lists workspace names on the selected instance. With more than one source, pass the URL returned by `sources` to subsequent commands:
+`sources` lists verified native instances without their credentials. It reads the launcher's private registration and asks that process to prove its identity before sending authenticated workspace requests. It does not scan ports or use whichever browser tab happens to be open. `workspaces` lists workspace names on the selected instance. With more than one source, pass the URL returned by `sources` to subsequent commands:
 
 ```text
 node bin/flujo-cloud.mjs workspaces --source http://127.0.0.1:4210

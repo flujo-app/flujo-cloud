@@ -2,12 +2,17 @@
 flowchart TB
   subgraph local["LOCAL COMPUTER"]
     source["FLUJO source workspace<br/>Flows · models · conversations · userdata<br/>MCP configuration + supported credentials"]
-    bridge["flujo-cloud CLI · separate repository<br/>up · call · down<br/>Local journal tracks each deployment"]
-    source -->|"1. Authenticated snapshot capture over loopback"| bridge
+    discovery["Native launch registration<br/>Private ~/.flujo/instances<br/>Fresh HMAC challenge before bearer use"]
+    bridge["flujo-cloud CLI + ManagedCloud<br/>sources · workspaces · preflight<br/>up · call · list · down"]
+    storage["Private ~/.flujo-cloud<br/>Worker credentials · attempt identities<br/>Journals + operation locks"]
+    source --> discovery --> bridge
+    bridge --- storage
+    source -->|"Authenticated workspace capture"| bridge
   end
 
-  bootstrap["2. PROVISION EACH WORKER<br/>Fly API + flyctl create app, Machine and volume<br/>Pinned FLUJO image from registry<br/>Snapshot key + worker bearer via Fly secrets<br/>AES-GCM encrypted snapshot via SFTP"]
-  calls["4. RUN FLOWS IN PARALLEL<br/>Authenticated private Fly tunnels"]
+  registry["OFFICIAL GHCR WORKER IMAGE<br/>cloud-worker revision / version / channel<br/>Check source compatibility + image identity<br/>Pin verified Linux manifest digest"]
+  bootstrap["PROVISION EACH WORKER<br/>Fly API + existing flyctl login<br/>Create app, Machine and volume<br/>Snapshot key + worker bearer via Fly secrets<br/>AES-GCM encrypted snapshot via SFTP"]
+  calls["RUN SELECTED FLOWS<br/>Authenticated private Fly tunnels"]
 
   subgraph fleet["PRIVATE FLY NETWORK · NO PUBLIC SERVICES"]
     direction LR
@@ -18,14 +23,15 @@ flowchart TB
 
   services["EXTERNAL SERVICES<br/>Codex / model provider · GitHub API<br/>Other configured MCP services"]
 
+  bridge -.-> registry -.-> bootstrap
   bridge -.-> bootstrap
-  bootstrap -.->|"3. Restore state, reinstall MCP packages, verify readiness"| fleet
+  bootstrap -.->|"Restore state, reinstall MCP packages, verify readiness"| fleet
   bridge ==> calls ==> fleet
   fleet -->|"Outbound model requests and MCP calls"| services
 
   classDef control fill:#e9f1ff,stroke:#3169a5,color:#15375b
   classDef worker fill:#e6f5ef,stroke:#34806a,color:#194d3e
   classDef external fill:#fff4df,stroke:#ac7c2b,color:#684612
-  class source,bridge,bootstrap,calls control
+  class source,discovery,bridge,storage,registry,bootstrap,calls control
   class w1,w2,w3 worker
   class services external

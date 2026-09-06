@@ -1,106 +1,54 @@
 # flujo-cloud
 
-A small bridge that runs the existing FLUJO execution engine on a private Fly Machine. It captures one workspace, encrypts the snapshot, restores it into a clean FLUJO container, and forwards flow requests over a local WireGuard proxy.
+Run an existing FLUJO flow on a private Fly Machine. The CLI discovers your local FLUJO instance, selects a compatible official worker image, clones the workspace and manages the worker's control credentials. Your flow uses FLUJO's existing models, conversations, execution engine and portable MCP installations.
 
-This package is separate from FLUJO. It does not implement another flow engine, expose a public service, or synchronize changes back to the local workspace.
+## Get started
+
+You need Node.js 22+, access to this private repository, an installed and signed-in Fly CLI, and an updated **native** FLUJO checkout running locally. Configure and test the flow in FLUJO first; unlock its workspace before cloning.
+
+For the managed path, use the updated [FLUJO `main` checkout](https://github.com/mario-andreschak/FLUJO), launched with `npm run dev`, or `npm start` after a production build. As of the September 6 validation, the published `flujo-ai` npm release does not yet contain native discovery. See [source setup](docs/deployment.md#1-prepare-flujo-locally). This bridge is installed from its private Git repository; it is not a public npm package.
+
+```text
+git clone https://github.com/flujo-app/flujo-cloud.git
+cd flujo-cloud
+node bin/flujo-cloud.mjs sources
+node bin/flujo-cloud.mjs workspaces
+node bin/flujo-cloud.mjs preflight --workspace test-cloud --flow FLUJO
+node bin/flujo-cloud.mjs up --workspace test-cloud --flow FLUJO
+```
+
+The bridge has no npm dependencies. These commands need no manually configured image digest, controller token, journal or local port. `preflight` checks setup without creating cloud resources. `up` creates one paid Machine and persistent volume and returns a worker ID.
+
+If multiple FLUJO instances or Fly organizations are available, select them with `--source URL` or `--org SLUG`. The default region is `iad`; use `--region` to choose another.
+
+Replace `WORKER` with the ID returned by `up`:
+
+```text
+node bin/flujo-cloud.mjs call WORKER --prompt "Inspect the workspace and report what this flow can do."
+node bin/flujo-cloud.mjs list
+node bin/flujo-cloud.mjs down WORKER
+```
+
+Calls execute the configured flow tools unattended. `--conversation-id ID` continues a conversation with a new prompt turn. `down` deletes the owned worker and its volume, then removes its saved control credential. `list` reports local deployment records, rather than polling the live fleet.
+
+**Verified September 6, 2026:** the managed path selected a published official image, ran Astra with the restored GitHub MCP and filesystem tools while the local source was stopped, continued the same conversation after a Machine restart, and removed the new worker and its credential. See the [completed managed CLI validation](docs/managed-cli-validation-2026-09-06.md), and the earlier [three-worker GitHub MCP test](docs/github-mcp-validation-2026-09-05.md) for parallel execution.
+
+## What is automatic
+
+Native FLUJO creates an owner-protected local discovery record. The CLI verifies a fresh proof from the advertised process before using its bearer. It reads the source's application, snapshot, layout and worker-protocol versions, checks official GHCR image metadata, and pins the Linux image by digest before provisioning. FLUJO's dedicated publishing workflow updates `cloud-worker` tags independently of release `latest`.
+
+Worker credentials and deployment records are kept privately under `~/.flujo-cloud`. The snapshot is encrypted in transit to the private worker. Portable MCP servers are installed through FLUJO's existing package functions at their Linux locations.
+
+This copies durable workspace state. It does not export arbitrary OS keyrings, move running desktop services or synchronize later changes back. Supported file-backed Codex subscription authentication worked in the recorded test; copied refresh credentials do not provide independent long-term logins. Use a dedicated workspace: selecting a flow limits its execution scope but does not redact other workspace data or credentials.
 
 ## Documentation
 
-- [Deployment diagram and architecture](docs/architecture.md): repository responsibilities, capture/restore, package reuse, credential transfer and persistence.
-- [Deployment and operations guide](docs/deployment.md): local setup, image requirements, CLI commands, GitHub MCP example, troubleshooting and cleanup.
-- [Verified local + three-worker GitHub MCP test](docs/github-mcp-validation-2026-09-05.md): actual comments, Machine IDs, execution overlap and test limits.
-- [Editable deployment diagram](docs/diagrams/deployment.mmd) and [SVG diagram](docs/diagrams/deployment.svg).
+- [Managed deployment guide](docs/deployment.md): preparation, commands, selection, recovery and cleanup.
+- [Architecture and deployment diagram](docs/architecture.md): repository boundaries, discovery, image selection, credentials and persistence.
+- [Operator guide](docs/operator-guide.md): explicit images/journals, custom environments, the three-worker GitHub example and infrastructure diagnostics.
+- [Managed CLI validation](docs/managed-cli-validation-2026-09-06.md): official publication, automatic setup and execution with the local source stopped.
+- [Verified GitHub MCP run](docs/github-mcp-validation-2026-09-05.md): comments, Machine IDs, concurrent execution and limits.
 
-The CLI and Fly orchestration live in this private `flujo-app/flujo-cloud` repository. Snapshot/restore, portable MCP package support and the execution engine live in [mario-andreschak/FLUJO](https://github.com/mario-andreschak/FLUJO). The bridge deploys the FLUJO image and invokes its existing APIs.
+The CLI is in this private [flujo-app/flujo-cloud](https://github.com/flujo-app/flujo-cloud) repository. Native discovery, snapshot/restore, worker images and execution live in [mario-andreschak/FLUJO](https://github.com/mario-andreschak/FLUJO). A future MCP wrapper can use the same `ManagedCloud` methods; this repository does not yet expose an MCP server.
 
-## Requirements
-
-- Node.js 22+ and an authenticated `flyctl` installation. `FLYCTL_PATH` may point to its executable; Fly also accepts `FLY_API_TOKEN` from the environment.
-- Local FLUJO containing the portable snapshot API, started with `FLUJO_SNAPSHOT_CONTROL_TOKEN` set. Unlock its workspace before capturing if it uses a password.
-- An immutable FLUJO image **containing the matching worker bootstrap implementation**, such as `ghcr.io/OWNER/flujo@sha256:<digest>`. A current release without these changes cannot run this worker. The bridge neither builds nor publishes an image, and does not require a local Docker daemon.
-- An explicit new Fly app name, organization, region, workspace, and local journal filename. `up` creates paid resources: one Machine and one volume.
-
-There are no npm dependencies. Run `npm test` for the mocked end-to-end lifecycle and `npm run smoke` for the offline CLI check. These checks require no Fly login, cloud resources, or real credentials.
-
-## Use
-
-Set `FLUJO_SNAPSHOT_CONTROL_TOKEN` to the source FLUJO control token and `FLUJO_CLOUD_CONTROL_TOKEN` to a separate random token of at least 32 characters. Set secrets through your shell or secret manager; do not put token values in command arguments. Retain the cloud control token for later `call` commands. The bridge stores neither token in its journal.
-
-```text
-node bin/flujo-cloud.mjs up --app my-private-worker --org my-org --region bog --workspace default-workspace --image ghcr.io/OWNER/flujo@sha256:DIGEST --journal .flujo-cloud/worker.journal.json
-node bin/flujo-cloud.mjs call --journal .flujo-cloud/worker.journal.json --request request.json --conversation-id conversation-id
-node bin/flujo-cloud.mjs down --journal .flujo-cloud/worker.journal.json
-```
-
-Replace the image with a real lowercase digest reference and choose a region available to your organization. `request.json` uses FLUJO's existing completion request shape, with `model` set to the **flow ID**. The bridge reads that flow from the authenticated worker and translates it to the current endpoint's `flow-<name>` routing form:
-
-```json
-{
-  "model": "YOUR_FLOW_ID",
-  "messages": [{ "role": "user", "content": "Execute the flow." }],
-  "stream": false
-}
-```
-
-Add `--flow FLOW_ID` (repeatable) or `--flows ID1,ID2` to `up` when this worker should run only selected flows. FLUJO resolves their dependencies and disables unrelated MCP servers in the exported copy, leaving the source workspace unchanged. A required nonportable server still fails export. With this scope, `call` requires `request.model` to be one of the exact selected flow IDs recorded in the journal. Omitting the flags captures the workspace's enabled-server scope.
-
-`--conversation-id` sets `metadata.conversationId`; the bridge supplies the saved workspace header and `metadata.flujo: "true"` so FLUJO executes MCP calls inside the worker. The response goes to stdout, so it can be redirected to a file. Streaming responses are currently buffered until completion.
-Because the current completion API routes by name, the bridge also rejects duplicate flow names before forwarding the request.
-
-`up` returns success only after authenticated `/api/worker/status` reports `ready` for the requested workspace and exact snapshot hash. Package/MCP bootstrap errors, unavailable authentication, or a different snapshot do not count as success. Readiness checks bootstrap state; use `call` with your representative flow to verify its model and tool dependencies end to end.
-
-## Three-worker GitHub MCP example
-
-`examples/parallel-github.mjs` clones one locally validated flow into three private Fly workers, then asks each to post one uniquely marked comment on an explicit dedicated test issue. The installed GitHub MCP must expose `github_rest_get` and `github_create_issue_comment` with the argument shapes used by `github-mcp-server-kosta@3.1.0`. Attach those tools to the selected flow so its snapshot includes the server and its portable installation plan. Store its GitHub token as a secret MCP environment variable in FLUJO before testing locally.
-
-Set `FLUJO_SNAPSHOT_CONTROL_TOKEN` and `FLUJO_CLOUD_CONTROL_TOKEN` as above. For a private issue, also set `FLUJO_GITHUB_AUDIT_TOKEN` to a token that can read that repository's issue comments; the helper uses it only for GET audits. `FLY_API_TOKEN` and `FLYCTL_PATH` remain optional. Credential values belong in environment variables or FLUJO's secret configuration, never command arguments.
-
-```text
-node examples/parallel-github.mjs prepare --target https://github.com/OWNER/TEST_REPO/issues/NUMBER --flow FLOW_ID --mcp INSTALLED_MCP_NAME --image REGISTRY/IMAGE@sha256:DIGEST --org YOUR_ORG --region iad --workspace test-cloud --source http://127.0.0.1:4200
-node examples/parallel-github.mjs provision --plan PATH_FROM_PREPARE
-node examples/parallel-github.mjs run --plan PATH_FROM_PREPARE
-node examples/parallel-github.mjs audit --plan PATH_FROM_PREPARE
-```
-
-Replace the issue placeholders, exact flow/server identifiers, and image with real values; the image must use a lowercase SHA-256 digest. `prepare` only writes a reviewable plan and requests under the ignored `.flujo-cloud/integration-runs` directory. `--directory PATH` selects another private output location. Optional `--conversation-id ID` continues the same saved conversation independently in each cloned worker; otherwise each receives a new conversation ID.
-
-`provision` captures and creates workers sequentially and allocates three paid Machines/volumes. `run` waits for all three journals to be ready, reserves all requests on disk, and dispatches the flow calls concurrently once. Each flow reads comments, creates its marker once if absent, and verifies it afterward. A read-only audit records exact marker counts, comment URLs, app names, and Machine IDs. This verifies the comments; inspect FLUJO's durable tool events separately to prove which MCP route executed them.
-
-If a call times out or returns an uncertain result, use `audit` and reconcile the conversation and issue before taking further action. The helper never automatically replays a dispatched request; keep its reservation files. Run files can contain private conversation results. When finished, clean up each owned worker with the existing command and its journal:
-
-```text
-node bin/flujo-cloud.mjs down --journal RUN_DIRECTORY/worker-1.journal.json
-node bin/flujo-cloud.mjs down --journal RUN_DIRECTORY/worker-2.journal.json
-node bin/flujo-cloud.mjs down --journal RUN_DIRECTORY/worker-3.journal.json
-```
-
-## Transfer and ownership
-
-The bridge verifies the source ZIP's SHA-256, encrypts it using AES-256-GCM with a fresh random 32-byte key, and writes only the encrypted envelope to its temporary directory. The envelope is `{format:"flujo-workspace-encrypted",version:1,iv,tag,data}`, with base64 fields. The key and remote control token go to `fly secrets import` over stdin. The worker authenticates/decrypts the envelope before checking the plaintext hash.
-
-The Machine initially runs `sleep infinity`. The bridge uploads via `fly ssh sftp put`, uses `fly machine exec` to give the fixed volume paths to the image's `node` user, then starts `/app/scripts/launch-next.mjs`. Both Machine configurations have `services: []`; the bridge allocates no public IP or Fly service. Fly proxy binds only `127.0.0.1` locally and reaches the specific Machine's private IPv6 address. The worker listens on IPv6 and requires its control bearer on worker endpoints.
-
-Creation uses the official HTTPS Machines API to preserve the exact image digest; flyctl 0.4.87 can append a digest twice when resolving positional images. The existing Fly login token is obtained in memory (or supplied by `FLY_API_TOKEN`) and sent only in the HTTPS authorization header. The bridge verifies the Machine's resolved image digest before upload and subsequent use. Configuration updates, secrets, volumes, and private tunnels use Fly CLI.
-
-The journal records the created app ID, owner marker, Machine/volume identities, image, workspace, and snapshot hash. It contains no credential values. Existing apps are never adopted. Fly currently reuses app names as app IDs, so the bridge also creates a random journal-derived **secret-name marker with the nonsecret value `1`**. `down` requires that marker and checks for unexpected Machines or volumes before destroying the dedicated app. Keep this app exclusively for the bridge. A missing marker, changed identity, or foreign resource causes cleanup to stop.
-
-If `up` fails, its journal remains for `down`; the bridge does not hide failures by deleting resources automatically. An uncertain app-creation response without a confirmed app ID requires manual reconciliation. A hard crash can also leave `.lock`/`.next` files or an encrypted temporary file; inspect the journal and remote state before removing those files. Fly CLI failure output is withheld because it can include configuration and credentials.
-
-## Current limits
-
-- Auth mode defaults to `--auth-state=copied-workspace`. This transfers the FLUJO snapshot's supported credentials. It does not export arbitrary OS keyrings. Two machines using copied Codex refresh credentials can interfere when either refreshes; a separate remote login is not implemented by this bridge.
-- This is a fork of durable state. Running processes, in-flight calls, local listeners, desktop integrations, external file roots, and ongoing local changes do not move. MCPs must have portable installation plans and remote access to their services.
-- Snapshot and encryption buffers are held in memory. The default download cap is 256 MiB (`--max-snapshot-mib` can increase it to 1024); allow additional memory for encrypted/base64 buffers. Machine memory defaults to 2048 MiB and the volume to 2 GiB.
-- The encrypted snapshot remains on the private volume for worker restarts. The restored workspace also contains credentials; destroy the dedicated app with `down` when finished. Automatic volume snapshots are disabled at creation.
-
-## Validation
-
-The [three-worker GitHub MCP validation](docs/github-mcp-validation-2026-09-05.md) also passed on 2026-09-05: the locally tested custom server and encrypted GitHub credential were cloned to three Linux Machines. Each Astra flow created and read back one dedicated issue comment through MCP; durable execution timestamps showed 48.970 seconds of overlap. All three used the copied Codex subscription login without an API key.
-
-On 2026-09-05, a private Fly worker running FLUJO commit `5330772856b76ae3661dc9b0c8ec079979b8e265` restored an encrypted `test-cloud` snapshot and executed its existing flow with `gpt-6-astra` using copied Codex subscription authentication, without an API key. The run used all four bundled MCP servers: filesystem read/write, FLUJO model inspection, Bash on Linux, and browser navigation. The existing conversation contained the completed cloud run.
-
-After restarting the same Machine, the worker became ready with its prior conversation and local/cloud proof files intact. A second Astra call read both files through the filesystem MCP and completed successfully. Independent checks confirmed the Codex adapter had an empty API-key field, the copied auth file had mode `0600`, and an unauthenticated worker-status request returned HTTP 401.
-
-This smoke run verifies that particular workspace, login, image, and bundled MCP set. It does not guarantee indefinite credential refresh or portability of arbitrary MCP servers. The automated tests use synthetic credentials and mocked Fly operations; they can run independently of the live account.
-
-Fly references: [Machines API](https://fly.io/docs/machines/api/machines-resource/), [Machine update](https://fly.io/docs/flyctl/machine-update/), [Machine exec](https://fly.io/docs/flyctl/machine-exec/), [private proxy](https://fly.io/docs/flyctl/proxy/), [SFTP upload](https://fly.io/docs/flyctl/ssh-sftp-put/), [secrets import](https://fly.io/docs/flyctl/secrets-import/).
+Run `npm test` and `npm run smoke` for synthetic tests and offline CLI checks. They require no cloud resources or real credentials.

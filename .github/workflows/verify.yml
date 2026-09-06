@@ -1,0 +1,33 @@
+name: Verify bridge
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # No packages, cloud login or provider credentials are needed. Windows
+      # exercises actual private ACLs; Linux exercises UID and mode checks.
+      - run: npm test
+      - run: npm run smoke
+      - name: Verify package entry points
+        run: node --input-type=module -e "import { ManagedCloud } from 'flujo-cloud'; import { CloudBridge } from 'flujo-cloud/bridge'; if (typeof ManagedCloud !== 'function' || typeof CloudBridge !== 'function') process.exit(1);"

@@ -4,9 +4,9 @@ Run an existing FLUJO flow on a private Fly Machine. The CLI discovers your loca
 
 ## Get started
 
-You need Node.js 22+, access to this private repository, an installed and signed-in Fly CLI, and an updated **native** FLUJO checkout running locally. Configure and test the flow in FLUJO first; unlock its workspace before cloning.
+You need Node.js 22+, access to this private repository, an installed and signed-in Fly CLI, and **native** FLUJO running locally with discovery support. Configure and test the flow in FLUJO first; unlock its workspace before cloning.
 
-For the managed path, use the updated [FLUJO `main` checkout](https://github.com/mario-andreschak/FLUJO), launched with `npm run dev`, or `npm start` after a production build. As of the September 6 validation, the published `flujo-ai` npm release does not yet contain native discovery. See [source setup](docs/deployment.md#1-prepare-flujo-locally). This bridge is installed from its private Git repository; it is not a public npm package.
+Start FLUJO with `npx flujo-ai@3.45.2`; no FLUJO Git checkout or local build is required. This version includes native discovery and the Windows startup fix. See [source setup](docs/deployment.md#1-prepare-flujo-locally) for data locations and checkout alternatives. Install the cloud CLI from its private Git repository:
 
 ```text
 git clone https://github.com/flujo-app/flujo-cloud.git

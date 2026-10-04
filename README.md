@@ -60,6 +60,20 @@ Preflight checks declared compatibility; full capture must actually reach ready 
 
 No live deployment of this new profile is claimed here. The retained September 6 validation covers the established flow path. New image/profile tests use synthetic runners, fetch responses and credentials; actual subscriptions, MCP/tool execution, automation continuity, private voice and PC-off recovery need their own qualification. See [profile details](docs/deployment.md#private-workspace-profile).
 
+## Clone a running private worker
+
+An existing managed `private-workspace` worker can be the source of a new worker without local FLUJO discovery:
+
+```text
+node bin/flujo-cloud.mjs clone SOURCE_WORKER --app NEW_UNUSED_APP
+```
+
+`ManagedCloud.clone(sourceWorkerId, targetOptions)` uses the source's saved credential and its owned Machine-specific private proxy. It checks the current source ownership, immutable image, execution profile and authenticated readiness, then captures and finalizes the whole current workspace before provisioning. The target receives a fresh app, attempt, control token and recovery UUID. Its default flows inherit the source selection; `--flow ID_OR_NAME` can choose different target defaults without reducing capture scope. Source metadata, credential, journal and default selection remain unchanged.
+
+The source must already be ready under this explicit profile. Legacy/operator workers, incomplete attempts, changed identities/configuration and stopped Machines cannot enter this path. Clone accepts no source URL, credential, data-root, journal or recovery override. It holds the source's managed and operator locks through capture, target handoff and observed proxy child closure. Unconfirmed snapshot/proxy cleanup retains the managed fence and preserves existing journal locks; a target that already reached ready remains recorded. A changed or missing lock requires reconciliation and is never recreated as evidence. Reconcile both outcomes before removing any lock or retrying. Snapshot acknowledgements confirm native session state, not physical staging cleanup or whole-source quiescence. This is a point-in-time clone, not synchronization or proof of provider/OFF authority. See [clone recovery](docs/deployment.md#clone-an-owned-cloud-workspace).
+
+If the target's journal release or metadata binding is uncertain, its own managed fence remains even when the Bridge's observed ready result is retained. That observation does not confirm a later metadata write or changed journal. The original error and target outcome survive a second source-lock cleanup failure too; confirmed source cleanup can release its separate locks. The target cannot be called, cloned or retired until that hold is reconciled.
+
 ## Documentation
 
 - [Managed deployment guide](docs/deployment.md): preparation, commands, selection, recovery and cleanup.

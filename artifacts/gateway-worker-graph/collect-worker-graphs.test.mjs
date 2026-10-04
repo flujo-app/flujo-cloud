@@ -70,6 +70,135 @@ test('distinct configured code target is collected but never claimed to be a ver
   assert.equal(report.source.ownershipVerified, false);
 });
 
+test('six distinct default and large profile entries collect at most 24 fixed GETs with explicit roles', async () => {
+  const input = config();
+  input.codeWorker = { ...input.workers[0], origin: 'https://code.example.test', workspace: 'fixture-code', token: 'FICTIONAL_CODE_TOKEN_1234567890123456' };
+  input.largeWorkers = [
+    { ...input.workers[0], origin: 'https://large-dev.example.test', workspace: 'fixture-large-dev', token: 'FICTIONAL_LARGE_DEV_TOKEN_123456789' },
+    { ...input.workers[1], origin: 'https://large-review.example.test', workspace: 'fixture-large-review', token: 'FICTIONAL_LARGE_REVIEW_TOKEN_123456' },
+  ];
+  input.largeCodeWorker = { ...input.codeWorker, origin: 'https://large-code.example.test', workspace: 'fixture-large-code', token: 'FICTIONAL_LARGE_CODE_TOKEN_123456789' };
+  const before = JSON.stringify(input), fake = fixture();
+  const report = await collectGatewayWorkerGraphs(input, { fetchImpl: fake.fetchImpl });
+  assert.equal(JSON.stringify(input), before);
+  assert.equal(fake.calls.length, 24); assert.equal(report.workers.length, 6);
+  assert.deepEqual(report.workers.map(worker => worker.id), ['worker-1', 'worker-2', 'code-worker', 'large-worker-1', 'large-worker-2', 'large-code-worker']);
+  assert.deepEqual(report.workers.map(worker => worker.roles), [['developer'], ['reviewer'], ['code-developer'], ['large-developer'], ['large-reviewer'], ['large-code-developer']]);
+  const entries = [...input.workers, input.codeWorker, ...input.largeWorkers, input.largeCodeWorker];
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index], calls = fake.calls.slice(index * 4, index * 4 + 4);
+    assert.deepEqual(calls.map(call => call.url.pathname), ['/api/worker/status', '/api/flow', '/api/model', '/api/mcp/servers']);
+    for (const call of calls) {
+      assert.equal(call.options.method, 'GET'); assert.equal(call.options.redirect, 'error');
+      assert.equal(call.url.origin, entry.origin); assert.equal(call.url.searchParams.get('workspace'), entry.workspace);
+      assert.equal(call.options.headers.Authorization, 'Bearer ' + entry.token);
+      assert.equal(call.options.headers['x-flujo-workspace'], entry.workspace);
+    }
+  }
+  const wire = JSON.stringify(report);
+  for (const entry of entries) { assert.equal(wire.includes(entry.token), false); assert.equal(wire.includes(entry.origin), false); }
+  assert.equal(report.observation.consistency, 'sequential'); assert.equal(report.observation.qualification, false);
+});
+
+test('deduplicates all six configured profile roles only by exact origin, workspace and token', async () => {
+  const input = config(), base = input.workers[0];
+  input.workers = [base, { ...base }]; input.codeWorker = { ...base };
+  input.largeWorkers = [{ ...base }, { ...base }]; input.largeCodeWorker = { ...base };
+  const fake = fixture(), report = await collectGatewayWorkerGraphs(input, { fetchImpl: fake.fetchImpl, includeUiLinks: true });
+  assert.equal(fake.calls.length, 4); assert.equal(report.workers.length, 1);
+  assert.equal(report.workers[0].id, 'worker-1');
+  assert.deepEqual(report.workers[0].roles, ['developer', 'reviewer', 'code-developer', 'large-developer', 'large-reviewer', 'large-code-developer']);
+  assert.deepEqual(report.workers[0].links, [{ kind: 'flujo-ui', href: base.origin + '/' }]);
+
+  const distinct = config();
+  distinct.largeWorkers = [
+    { ...distinct.workers[0], workspace: 'fixture-other-workspace' },
+    { ...distinct.workers[0], token: 'FICTIONAL_OTHER_CONTROL_TOKEN_12345678' },
+  ];
+  distinct.largeCodeWorker = { ...distinct.workers[1] };
+  const otherFake = fixture(), other = await collectGatewayWorkerGraphs(distinct, { fetchImpl: otherFake.fetchImpl });
+  assert.equal(otherFake.calls.length, 16); assert.equal(other.workers.length, 4);
+  assert.deepEqual(other.workers.map(worker => worker.roles), [['developer'], ['reviewer', 'large-code-developer'], ['large-developer'], ['large-reviewer']]);
+  assert.equal(otherFake.calls[8].options.headers['x-flujo-workspace'], 'fixture-other-workspace');
+  assert.equal(otherFake.calls[12].options.headers.Authorization, 'Bearer ' + distinct.largeWorkers[1].token);
+});
+
+test('malformed or oversized large profiles refuse before any transport, even when targets would deduplicate', async () => {
+  for (const change of [
+    value => value.largeWorkers = null,
+    value => value.largeWorkers = [],
+    value => value.largeWorkers = { 0: value.workers[0], length: 1 },
+    value => value.largeWorkers = [value.workers[0], value.workers[0], value.workers[0]],
+    value => value.largeWorkers = Array(1),
+    value => value.largeWorkers = [{ ...value.workers[0], origin: 'http://large.example.test' }],
+    value => value.largeWorkers = [{ ...value.workers[0], workspace: '../PRIVATE' }],
+    value => value.largeWorkers = [{ ...value.workers[0], token: 'short' }],
+    value => value.largeCodeWorker = null,
+    value => value.largeCodeWorker = [],
+    value => value.largeCodeWorker = { ...value.workers[0], origin: 'https://large.example.test/?secret=PRIVATE' },
+    value => Object.defineProperty(value, 'largeWorkers', { get() { throw new Error('PRIVATE getter'); } }),
+    value => Object.defineProperty(value, 'largeCodeWorker', { get() { throw new Error('PRIVATE getter'); } }),
+    value => { value.largeCodeWorker = { ...value.workers[0], token: 'FICTIONAL_LARGE_CROSS_TOKEN_12345678' }; value.workers[1].workspace = value.largeCodeWorker.token; },
+  ]) {
+    const input = config(); change(input); const fake = fixture();
+    await assert.rejects(collectGatewayWorkerGraphs(input, { fetchImpl: fake.fetchImpl }), /^Error: Invalid (configured worker|worker graph configuration)\.$/);
+    assert.equal(fake.calls.length, 0);
+  }
+});
+
+test('all large-profile token forms are collected before another target projects reflected labels', async () => {
+  for (const token of ['FICTIONAL_LARGE_REFLECTED_TOKEN_123456', 'synthetic"large_token_012345678901234567890', 'synthetic\\large_token_012345678901234567890']) {
+    const input = config();
+    input.largeWorkers = [{ ...input.workers[0], origin: 'https://large.example.test' }];
+    input.largeCodeWorker = { ...input.workers[0], origin: 'https://large-code.example.test', token };
+    const fake = fixture(url => url.origin === input.workers[0].origin && url.pathname === '/api/model'
+      ? json([{ id: 'model_1', name: token }]) : json(values('fixture-dev')[url.pathname]));
+    const report = await collectGatewayWorkerGraphs(input, { fetchImpl: fake.fetchImpl });
+    assert.equal(fake.calls.length, 16);
+    const first = report.workers[0];
+    assert.equal(first.status.code, 'KNOWN_SECRET_REFUSED');
+    assert.deepEqual(first.flows, []); assert.deepEqual(first.models, []); assert.deepEqual(first.servers, []);
+    assert.equal(report.workers[3].status.state, 'ready');
+    const wire = JSON.stringify(report);
+    assert.equal(wire.includes(token), false); assert.equal(wire.includes(JSON.stringify(token).slice(1, -1)), false);
+  }
+});
+
+test('known whole-token URI, base64 and hex encodings from another profile refuse projected labels', async () => {
+  const token = 'FiCtIoNaL!"\\~(+):/_Token_???_01234567890123456789';
+  const base64 = Buffer.from(token, 'utf8').toString('base64');
+  const base64url = base64.replace(/\+/g, '-').replace(/\//g, '_');
+  assert.ok(base64.endsWith('=')); assert.notEqual(base64url, base64);
+  const uriForms = [encodeURIComponent(token), encodeURI(token), new URLSearchParams({ key: token }).toString().slice(4)];
+  const labels = [...uriForms.flatMap(value => [value,
+    value.replace(/%[0-9A-F]{2}/g, part => part.toLowerCase()),
+    value.replace(/%[0-9A-F]{2}/g, (part, offset) => offset % 2 ? part.toLowerCase() : part),
+  ]), base64, base64.replace(/=+$/, ''), base64url, base64url.replace(/=+$/, ''),
+  Buffer.from(token, 'utf8').toString('hex'), Buffer.from(token, 'utf8').toString('hex').toUpperCase()];
+  for (let index = 0; index < labels.length; index++) {
+    const label = labels[index], input = config();
+    input.largeCodeWorker = { ...input.workers[0], origin: 'https://large-code.example.test', token };
+    const fake = fixture(url => url.origin === input.workers[0].origin && url.pathname === '/api/model'
+      ? json([{ id: 'model_1', name: label }]) : json(values('fixture-dev')[url.pathname]));
+    const report = await collectGatewayWorkerGraphs(input, { fetchImpl: fake.fetchImpl });
+    assert.equal(fake.calls.length, 12);
+    const first = report.workers[0];
+    assert.equal(first.status.code, 'KNOWN_SECRET_REFUSED', `known whole-token encoding case ${index}`);
+    assert.deepEqual(first.flows, []); assert.deepEqual(first.models, []); assert.deepEqual(first.servers, []);
+    const wire = JSON.stringify(report);
+    assert.equal(wire.includes(label), false); assert.equal(wire.includes(JSON.stringify(label).slice(1, -1)), false);
+  }
+  // Only percent-escape hex is case-insensitive. Changing unescaped credential
+  // letters produces a different value and must not be treated as this token.
+  const different = encodeURIComponent(token).toLowerCase(), input = config();
+  input.largeCodeWorker = { ...input.workers[0], origin: 'https://large-code.example.test', token };
+  const fake = fixture(url => url.origin === input.workers[0].origin && url.pathname === '/api/model'
+    ? json([{ id: 'model_1', name: different }]) : json(values('fixture-dev')[url.pathname]));
+  const report = await collectGatewayWorkerGraphs(input, { fetchImpl: fake.fetchImpl });
+  assert.equal(report.workers[0].status.state, 'ready');
+  assert.equal(report.workers[0].models[0].name, different);
+});
+
 test('unavailable model inventory preserves available topology and drops unmatched model binding', async () => {
   const input = config(); input.workers = [input.workers[0]];
   const fake = fixture(url => url.pathname === '/api/model' ? json({ secret: 'PRIVATE' }, 503) : json(values('fixture-dev')[url.pathname]));

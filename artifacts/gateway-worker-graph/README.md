@@ -17,12 +17,19 @@ const report = await collectGatewayWorkerGraphs(runtimeGatewayConfig, {
 ```
 
 The caller passes its existing `workers` array (one or two configured developer /
-reviewer entries) and optional `codeWorker`. Each entry needs only `origin`, `token`
+reviewer entries), optional `codeWorker`, optional `largeWorkers` (one or two),
+and optional `largeCodeWorker`. Each entry needs only `origin`, `token`
 and `workspace`; model/process values and other configuration are ignored. Origins
 must be HTTPS roots without credentials, query strings, fragments or extra paths.
 Tokens remain server-side and must never be placed in a browser bundle. An identical
-origin/workspace/token for code and text is collected once, with both role labels.
+origin/workspace/token across profiles is collected once, retaining every role:
+`developer`, `reviewer`, `code-developer`, `large-developer`, `large-reviewer`,
+and `large-code-developer`. Distinct large entries use IDs `large-worker-1`,
+`large-worker-2` and `large-code-worker`; default IDs remain unchanged.
+At most six configured entries and 24 fixed GETs are admitted before deduplication.
 Entries are configured HTTP targets, not an independently verified Machine count.
+Supply trusted JSON-derived server configuration. Arbitrary JavaScript proxies,
+array accessors and coercion callbacks are not a sandboxed input boundary.
 
 The module makes only authenticated GETs to `/api/worker/status`, `/api/flow`,
 `/api/model` and `/api/mcp/servers`. It sets both the workspace query and header,
@@ -80,12 +87,27 @@ Subflow targets are configured possibilities; runtime/dynamic selection is not
 resolved by these GETs. Do not represent a singular child as the executed target.
 
 Projection caps match PR6:100flows,200models,200servers,256nodes/512edges per flow,
-2048nodes/4096edges total,128-character IDs,160-character printable labels and
+2048nodes/4096edges per worker inventory,128-character IDs,160-character printable labels and
 finite bounded positions. Matched model/MCP/subflow bindings are retained.
 Prompts, conversations, raw model configuration, credentials, MCP arguments/env/
-headers/URLs and raw errors are omitted. Known configured worker-token values in
-retained labels refuse the target inventory. Flow/server/model names may still be
+headers/URLs and raw errors are omitted. Complete known configured worker-token
+values and the explicitly recognized reversible encodings in retained labels
+refuse the target inventory. All configured profiles supply this guard before
+deduplication or the first GET. Arbitrary encodings, partial/chunked values and
+unknown secrets are not covered by this finite guard. Flow/server/model names may still be
 private; authenticated reports stay outside Git and portable artifacts.
+
+Recognized whole-token forms are raw/JSON-escaped text, URI/component/query
+encoding with percent-hex case normalization, padded/unpadded UTF-8 base64 and
+base64url, and lower/upper UTF-8 hex. Unescaped credential-letter case is preserved.
+Percent-hex normalization can conservatively refuse a literal `%HH` label.
+
+With six distinct configured targets, the per-worker caps can produce at most
+600 flows, 1200 models, 1200 servers, 12288 nodes and 24576 edges in one report.
+The existing shared deadline and per-response byte bounds still apply; this is
+a sequential observation, not an atomic fleet snapshot or a Machine census.
+The deadline bounds HTTP/body waits; synchronous JSON parsing and projection
+do not have a hard CPU-preemption guarantee.
 
 `includeUiLinks:true` adds only each configured HTTPS root as a `flujo-ui` link,
 without tokens, queries or conversation links. Native UI authentication remains
@@ -108,3 +130,28 @@ The correction checks both raw and JSON-escaped token forms. Its12 collector
 groups passed, including the new quote/backslash regressions. These are fixture
 and source results, not native worker calls; no runtime privacy incident was
 observed. The original candidate and its review finding remain in Git history.
+
+## Large-profile successor, October 4
+
+This separate successor starts at frozen PR7 head `d1127044`. The first author
+collector run passed16/16 using the CRLF checkout. A local attribute policy then
+pinned graph source to LF; the same16 groups passed once on exact LF bytes.
+The unchanged projector now matches its Git blob. These repeated executions
+overlap and are not32 distinct security conditions or actual worker calls.
+
+Independent static review found an inherited encoded-label gap: a known token
+could be reflected as reversible percent/base64 text without matching the old
+raw/JSON guard. One targeted fictional transport witness failed before correction
+when a percent-encoded cross-profile token survived projection. The corrected
+collector passed17/17 once, including the added known-encoding group. Original
+failures and preliminary pins are retained in SOURCE-CHECKS.json. No runtime
+credential incident was observed and no actual GET or inference was performed.
+Independent static review passed the final exact LF code/test bytes without
+test or import reruns. Hosted successor confirmation is pending at publication.
+
+Root must authenticate the gateway session before collection, keep runtime
+configuration server-side, return no-store JSON, and distinguish this report from
+the Sample sky. Optional direct FLUJO UI links still require their native login.
+Gateway route adoption, World graph consumption, voice response playback, native
+authority, subscription qualification and hot workspace/MCP cloning are separate
+acceptance gates. This pack supplies graph source; it does not establish them.

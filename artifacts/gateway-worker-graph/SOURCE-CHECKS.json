@@ -1,0 +1,47 @@
+{
+  "format": "flujo-gateway-worker-graph-source-checks",
+  "version": 1,
+  "scope": "SOURCE_AND_INJECTED_FIXTURES_ONLY",
+  "base": "d1127044aceffe5fca68093aeddd168679b1cdc2",
+  "historicalPr7": {
+    "pullRequest": "https://github.com/flujo-app/flujo-cloud/pull/7",
+    "headUnchanged": true,
+    "heldUnadopted": true,
+    "projectorGroups": 19,
+    "initialCollectorGroups": 11,
+    "jsonEscapingCorrectedCollectorGroups": 12,
+    "hostedWorkflow": "https://github.com/flujo-app/flujo-cloud/actions/runs/37197510969",
+    "ubuntu": { "total": 257, "passed": 256, "skipped": 1, "failed": 0 },
+    "windows": { "total": 257, "passed": 257, "skipped": 0, "failed": 0 }
+  },
+  "successorChecks": {
+    "runtime": "Node24.19.0 on Windows",
+    "firstCrLfAuthorAttempt": { "groups": 16, "passed": 16, "failed": 0, "exitCode": 0, "collectorSha256": "50946b5f2b0eec79243528d0687bde7eaea3a99679431fd9eeadd491c1253771", "testSha256": "0f87d4d9eb32fea52ad40fdf58a22fdc48a4120dd422cac830b1932907a246dd" },
+    "firstLfAttempt": { "groups": 16, "passed": 16, "failed": 0, "exitCode": 0, "collectorSha256": "64fb33bb2b0a9bb9e79189ae7975c09a5a68d2a362a9dc4b47884ce4e3342b4c", "testSha256": "8cbee6f3ebf68a11b0f6150070684609c70dbe1a9bd9ee36f98aff9ed93f4159" },
+    "independentFinding": "Known configured whole-token URI/base64 encodings in retained labels can bypass the original raw/JSON token guard; static source finding, not a runtime incident",
+    "preCorrectionWitness": { "selectedGroups": 1, "failed": 1, "exitCode": 1, "collectorSha256": "64fb33bb2b0a9bb9e79189ae7975c09a5a68d2a362a9dc4b47884ce4e3342b4c", "outcome": "Percent-encoded cross-profile token survived the projected model label" },
+    "correctedAttempt": { "groups": 17, "passed": 17, "failed": 0, "skipped": 0, "cancelled": 0, "exitCode": 0 },
+    "accounting": "Repeated groups and multiple encoding cases overlap; counts are not aggregate distinct security conditions or model checks",
+    "projectorRerun": false
+  },
+  "testedLfPins": [
+    { "path": "collect-worker-graphs.mjs", "bytes": 12405, "sha256": "1907ae9875fc5ab235f9ee7ddc79e070460847f3f9af9590969c85be581cce10" },
+    { "path": "collect-worker-graphs.test.mjs", "bytes": 22503, "sha256": "f6ea90b021d0d13617650c13691652535b2be7e3f62451a300f4b4360f3d5532" },
+    { "path": "project-inventory.mjs", "bytes": 10458, "sha256": "2ac7f997ca63d26bbcd5f011605a260cea0bec4a734525d1911f16c90ec97032", "gitSourceUnchanged": true }
+  ],
+  "bounds": { "configuredEntriesBeforeDeduplication": 6, "fixedGetsBeforeDeduplication": 24, "deduplicationIdentity": "exact origin/workspace/token", "defaultDeadlineMs": 10000, "maximumDeadlineMs": 30000 },
+  "guardScope": "Complete configured token values only: raw/JSON, URI/component/query with percent-hex normalization, padded/unpadded UTF8 base64/base64url and upper/lower UTF8 hex. Arbitrary encodings, partial/chunked values and unknown secrets are unqualified.",
+  "independentStaticReview": { "verdict": "PASS", "scope": "Exact corrected LF source/test bytes and appended history; no reviewer tests/imports", "encodedLabelFinding": "Closed within explicitly declared known whole-token forms; not universal or unknown-secret detection" },
+  "hostedSuccessorConfirmed": false,
+  "actualWorkerGets": 0,
+  "actualModelCalls": 0,
+  "runtimeChanges": 0,
+  "deployed": false,
+  "limits": [
+    "Configured HTTP targets are not verified Fly Machines; ownership and image/archive pins are not established",
+    "Native API empty arrays may reflect storage errors; unavailable/truncated/sequential markers remain necessary",
+    "Projection caps apply per worker; six distinct targets may return600flows/1200models/1200servers/12288nodes/24576edges",
+    "Authenticating gateway route, World consumption, direct native UI login and response playback remain Root-owned integration",
+    "Full native authority, hot workspace/MCP cloning, both subscriptions and autonomous continuity remain unqualified"
+  ]
+}

@@ -24,6 +24,7 @@ async function fixture(t) {
     flows: [{ id: 'default-agent-flujo', name: 'FLUJO' }],
     sources: [{ source: origin, instanceId: 'synthetic-instance', token: sourceToken, appRoot: '/app', dataRoot: '/data' }],
     response: 'completed', stateDirectory: path.join(directory, 'controller') };
+  state.compatibility = compatibility;
   const fly = { async run(args) { state.calls.push({ command: args }); return JSON.stringify(state.organizations); } };
   const bridge = {
     async up(options, env) {
@@ -41,7 +42,11 @@ async function fixture(t) {
       await state.beforeJournal?.(options);
       await new Journal(options.journal).create({ format: 'flujo-cloud-journal', version: 1,
         owner: randomUUID(), app: options.app, org: options.org, region: options.region,
-        workspace: options.workspace, image: options.image, flowIds: options.flowIds,
+        workspace: options.workspace, image: options.image,
+        ...(options.profile === 'private-workspace' ? { profile: options.profile, recoveryId: options.recoveryId,
+          recoveryEpoch: options.recoveryEpoch, defaultFlowIds: options.defaultFlowIds,
+          sourceCompatibility: options.sourceCompatibility, sourceRevision: options.sourceRevision,
+          sourceProvenance: options.sourceProvenance, targetRevision: options.targetRevision } : { flowIds: options.flowIds }),
         state: state.failUp || state.failCapture || state.failCreateApp ? 'failed' : 'ready',
         stage: state.failCapture ? 'snapshot' : state.failCreateApp ? 'create-app' : 'ready',
         appCreated: !state.failCapture && !state.failCreateApp,
@@ -72,7 +77,7 @@ async function fixture(t) {
     assert.equal(request.origin, origin);
     if (request.pathname === '/api/workspaces') return Response.json({ workspaces: [{ name: 'test-cloud', roots: ['private-details-not-returned'] }], defaultWorkspace: 'test-cloud' });
     assert.equal(options.headers['x-flujo-workspace'], 'test-cloud');
-    if (request.pathname === '/api/snapshot/info') return Response.json({ workspace: 'test-cloud', capability: 'available', workerCompatibility: compatibility });
+    if (request.pathname === '/api/snapshot/info') return Response.json({ workspace: 'test-cloud', capability: 'available', workerCompatibility: state.compatibility });
     if (request.pathname === '/api/flow') return Response.json(state.flows);
     throw new Error('Unexpected synthetic endpoint.');
   };
@@ -83,10 +88,12 @@ async function fixture(t) {
       await state.afterWrite?.(filename, value, options);
     },
     discover: async () => state.sources,
-    resolveImage: async ({ source, image: explicit }) => {
-      assert.deepEqual(source, compatibility);
+    resolveImage: async ({ source, image: explicit, profile }) => {
+      assert.deepEqual(source, state.compatibility);
       if (state.failImage) throw new Error('No compatible official worker image.');
-      return { image: explicit || image, mode: 'official', applicationVersion: '3.45.0', revision: 'b'.repeat(40) };
+      if (profile === 'private-workspace' && explicit) return { image: explicit, mode: 'explicit', compatibility: 'unchecked' };
+      return { image: explicit || image, mode: 'official', applicationVersion: '3.45.0', revision: 'b'.repeat(40),
+        ...(profile === 'private-workspace' ? { ...compatibility, compatibility: 'verified', workerSnapshotSourceVersion: 1 } : {}) };
     },
   });
   return { managed, state, input: { workspace: 'test-cloud' } };
@@ -421,4 +428,116 @@ test('operator journal contention never binds an unrelated failed capture journa
       assert.ok(!state.calls.some(call => call.down || call.call));
     });
   }
+});
+
+test('private preflight separates full capture from default flow choice and creates no recovery identity or credentials', async t => {
+  const { managed, state, input } = await fixture(t);
+  state.compatibility = { ...compatibility, revision: 'b'.repeat(40), workerSnapshotSourceVersion: 1 };
+  state.flows.push({ id: 'other-flow', name: 'Other' });
+  const result = await managed.preflight({ ...input, profile: 'private-workspace', flowIds: ['FLUJO'] });
+  assert.equal(result.profile, 'private-workspace');
+  assert.equal(result.captureScope, 'workspace');
+  assert.deepEqual(result.flows, [{ id: 'default-agent-flujo', name: 'FLUJO' }]);
+  assert.equal(result.portability, 'checked-during-full-capture-before-provisioning');
+  assert.equal(Object.hasOwn(result, 'recoveryId'), false);
+  assert.equal(Object.hasOwn(result, 'mcpPortable'), false);
+  await assert.rejects(fs.stat(state.stateDirectory), { code: 'ENOENT' });
+  assert.equal(state.calls.some(call => call.up), false);
+});
+
+test('private managed attempt stores one identity in metadata/journal and uses defaults without restricting later flow IDs', async t => {
+  const { managed, state, input } = await fixture(t);
+  state.compatibility = { ...compatibility, revision: 'b'.repeat(40), workerSnapshotSourceVersion: 1 };
+  const result = await managed.up({ ...input, profile: 'private-workspace' });
+  const files = managed.paths(result.worker),metadata = await readPrivateJson(files.metadata),journal = await new Journal(files.journal).read();
+  assert.equal(metadata.profile, 'private-workspace');
+  assert.match(metadata.recoveryId, /^[a-f0-9-]{36}$/);
+  assert.equal(metadata.recoveryEpoch, 1);
+  assert.equal(journal.recoveryId, metadata.recoveryId);
+  assert.equal(journal.recoveryEpoch, metadata.recoveryEpoch);
+  assert.deepEqual(journal.sourceCompatibility, metadata.sourceCompatibility);
+  assert.equal(journal.sourceRevision, metadata.sourceRevision);
+  assert.equal(journal.targetRevision, metadata.targetRevision);
+  assert.equal(Object.hasOwn(journal, 'flowIds'), false);
+  assert.deepEqual(metadata.defaultFlowIds, ['default-agent-flujo']);
+  assert.equal(state.calls.find(call => call.up).up.recoveryId, metadata.recoveryId);
+  await managed.call(result.worker, { request: { messages: [] } });
+  assert.equal(state.calls.filter(call => call.call).at(-1).call.request.model, 'default-agent-flujo');
+  await managed.call(result.worker, { request: { model: 'added-after-restore', messages: [] } });
+  assert.equal(state.calls.filter(call => call.call).at(-1).call.request.model, 'added-after-restore');
+  assert.deepEqual((await new Journal(files.journal).read()).defaultFlowIds, ['default-agent-flujo']);
+  assert.equal((await readPrivateJson(files.metadata)).recoveryId, metadata.recoveryId);
+  const credentials = await readPrivateJson(files.credentials);
+  await assert.rejects(managed.up({ ...input, profile: 'private-workspace', app: result.worker }), /already exists/);
+  assert.deepEqual(await readPrivateJson(files.credentials), credentials);
+  assert.equal(state.calls.filter(call => call.up).length, 1);
+});
+
+test('private full workspace with no default or several defaults requires an explicit call model', async t => {
+  for (const multiple of [false, true]) {
+    const { managed, state, input } = await fixture(t);
+    state.compatibility = { ...compatibility, revision: 'b'.repeat(40), workerSnapshotSourceVersion: 1 };
+    state.flows = multiple ? [{ id: 'one', name: 'One' }, { id: 'two', name: 'Two' }] : [];
+    const result = await managed.up({ ...input, profile: 'private-workspace', ...(multiple ? { flowIds: ['one', 'two'] } : {}) });
+    await assert.rejects(managed.call(result.worker, { request: { messages: [] } }), /exact restored flow ID/);
+    assert.equal(state.calls.some(call => call.call), false);
+    await managed.call(result.worker, { request: { model: 'new-live-flow', messages: [] } });
+    assert.equal(state.calls.filter(call => call.call).at(-1).call.request.model, 'new-live-flow');
+  }
+});
+
+test('private profile/capability/unchecked-image errors stop before provisioning or saved control state', async t => {
+  for (const variant of ['unknown', 'old-source', 'unchecked', 'identity', 'reserved-defaults']) {
+    const { managed, state, input } = await fixture(t);
+    state.compatibility = variant === 'old-source' ? compatibility
+      : { ...compatibility, revision: 'b'.repeat(40), workerSnapshotSourceVersion: 1 };
+    const extra = variant === 'unknown' ? { profile: 'unknown' }
+      : variant === 'unchecked' ? { image }
+        : variant === 'identity' ? { workspace: { toString: () => input.workspace } }
+          : variant === 'reserved-defaults' ? { defaultFlowIds: ['default-agent-flujo'] } : {};
+    await assert.rejects(managed.up({ ...input, profile: 'private-workspace', ...extra }));
+    assert.equal(state.calls.some(call => call.up), false);
+    await assert.rejects(fs.stat(state.stateDirectory), { code: 'ENOENT' });
+  }
+});
+
+test('private model primitives and interrupted managed state cannot silently dispatch a default or replay', async t => {
+  const { managed, state, input } = await fixture(t);
+  state.compatibility = { ...compatibility, revision: 'b'.repeat(40), workerSnapshotSourceVersion: 1 };
+  const result = await managed.up({ ...input, profile: 'private-workspace' });
+  for (const model of [null, 0, '', [], { toString: () => 'default-agent-flujo' }]) {
+    await assert.rejects(managed.call(result.worker, { request: { model, messages: [] } }), /exact restored flow ID/);
+  }
+  const files = managed.paths(result.worker),metadata = await readPrivateJson(files.metadata);
+  await writePrivateJson(files.metadata, { ...metadata, phase: 'provisioning' });
+  await assert.rejects(managed.call(result.worker, { request: { messages: [] } }), /incomplete or unknown/);
+  assert.equal(state.calls.some(call => call.call), false);
+  assert.equal((await readPrivateJson(files.metadata)).phase, 'provisioning');
+});
+
+test('private metadata/journal profile mismatch blocks calls and cleanup without changing prior identity or credential', async t => {
+  const { managed, state, input } = await fixture(t);
+  state.compatibility = { ...compatibility, revision: 'b'.repeat(40), workerSnapshotSourceVersion: 1 };
+  const result = await managed.up({ ...input, profile: 'private-workspace' });
+  const files = managed.paths(result.worker),metadata = await readPrivateJson(files.metadata),credentials = await readPrivateJson(files.credentials);
+  const journalBytes = await fs.readFile(files.journal);
+  await writePrivateJson(files.metadata, { ...metadata, recoveryEpoch: 2 });
+  await assert.rejects(managed.call(result.worker, { request: { messages: [] } }), /identity changed|migration/);
+  await assert.rejects(managed.down(result.worker), /identity changed|migration/);
+  assert.deepEqual(await readPrivateJson(files.credentials), credentials);
+  assert.deepEqual(await fs.readFile(files.journal), journalBytes);
+  assert.equal(state.calls.some(call => call.call || call.down), false);
+});
+
+test('managed unknown-native source provenance persists without inferring a checkout revision or weakening target verification', async t => {
+  const { managed, state, input } = await fixture(t);
+  state.compatibility = { ...compatibility, workerSnapshotSourceVersion: 1 };
+  const result = await managed.up({ ...input, profile: 'private-workspace' });
+  const files = managed.paths(result.worker),metadata = await readPrivateJson(files.metadata),journal = await new Journal(files.journal).read();
+  assert.equal(metadata.sourceRevision, null);
+  assert.equal(metadata.sourceProvenance, 'unknown-native');
+  assert.equal(metadata.targetRevision, 'b'.repeat(40));
+  assert.deepEqual(journal.sourceCompatibility, state.compatibility);
+  assert.equal(journal.sourceRevision, null);
+  assert.equal(journal.sourceProvenance, 'unknown-native');
 });

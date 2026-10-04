@@ -20,7 +20,7 @@ npm run dev
 
 For an existing checkout, update it and restart FLUJO through the normal launcher. A production build can use `npm run build` followed by `npm start`. These launchers create the source control token and private discovery record automatically, so the bridge needs no manually supplied token or port. Keep the source running through capture; the worker operates independently afterward.
 
-Automatic discovery applies to native localhost mode. Capture is unavailable in network/public exposure: switch the source to localhost mode first. Older or container installations with a supported loopback snapshot API can use the [operator interface](operator-guide.md).
+Automatic discovery applies to native localhost mode. Ordinary network/public sources cannot be captured. A paired private worker with the explicit snapshot-source profile can be captured over an authorized private loopback tunnel; it must pass the same dedicated bearer/workspace/runtime checks. Older or container installations with a supported loopback snapshot API can use the [operator interface](operator-guide.md). The CLI does not accept arbitrary remote source URLs.
 
 In FLUJO:
 
@@ -36,7 +36,7 @@ Supported file-backed Codex ChatGPT authentication can transfer. Arbitrary OS ke
 
 ## 2. Install the bridge
 
-Install Node.js 22+ and the Fly CLI, and sign in to the Fly account that will own and pay for the worker. Use an authorized GitHub account to clone this private repository:
+Install Node.js 22+ and the Fly CLI, and sign in to the Fly account that will own and pay for the worker. Clone the bridge source repository:
 
 ```text
 git clone https://github.com/flujo-app/flujo-cloud.git
@@ -44,7 +44,7 @@ cd flujo-cloud
 node bin/flujo-cloud.mjs --help
 ```
 
-There are no npm dependencies to install. This private bridge is not published as a public npm package; run the CLI with Node from the authorized Git checkout. It finds `flyctl` in its conventional `~/.fly/bin` location or on PATH and uses the existing Fly login.
+There are no npm dependencies to install. This bridge is installed from Git rather than a published npm package; run the CLI with Node from the source checkout. It finds `flyctl` in its conventional `~/.fly/bin` location or on PATH and uses the existing Fly login. Its private deployment records and credentials are not source files.
 
 ## 3. Discover and check the source
 
@@ -80,6 +80,29 @@ The command captures the workspace, encrypts it, creates one paid Fly Machine an
 Defaults are two shared CPUs, 2048 MiB memory, a 2 GiB volume and a 256 MiB compressed snapshot cap. Use `--memory-mb`, `--volume-gb` or `--max-snapshot-mib` to change these. `--timeout-seconds` defaults to 600 per wait/request, rather than imposing one overall deployment deadline. No public Fly service or IP is allocated, and automatic volume snapshots are disabled at creation.
 
 The official image is resolved and pinned automatically. The resolver checks source version, snapshot format, workspace layout, worker protocol, source labels and Linux architecture before provisioning. Missing or incompatible image metadata stops deployment. The [architecture guide](architecture.md#official-worker-images) explains the dedicated publishing channel; custom digests and manual journal control remain in the [operator guide](operator-guide.md).
+
+## Private workspace profile
+
+For a new dedicated full workspace, add `--profile private-workspace` to both `preflight` and `up`. The default/explicit `--profile flow` retains the original record shape, selected-flow scope, localhost exposure and `on-failure` restart; neither path migrates an existing worker.
+
+```text
+node bin/flujo-cloud.mjs preflight --workspace test-cloud --profile private-workspace --flow FLUJO
+node bin/flujo-cloud.mjs up --workspace test-cloud --profile private-workspace --flow FLUJO
+```
+
+The API equivalent is `ManagedCloud.up({workspace,profile:'private-workspace',flowIds:[...]})`. `flowIds` selects call defaults, resolved by exact ID or unique name in managed preparation. The snapshot begin request deliberately has no body/flow IDs. The native capture planner therefore checks all enabled workspace MCP dependencies; a nonportable required dependency, failed snapshot, bad download hash or incomplete finalize stops before creating an app, volume or Machine. Read-only preflight does not perform this capture and is not a portability/model/tool qualification.
+
+The source must report numeric `workerCompatibility.workerSnapshotSourceVersion: 1`. The official target resolver verifies Linux architecture, manifest/config descriptor digests, FLUJO source identity, OCI revision and `io.flujo.worker.snapshot-source="1"`, plus exact application/snapshot/layout/protocol labels. A reported source revision must match the target. A normal native launcher may not report `FLUJO_BUILD_REVISION`; the bridge records that as `sourceRevision: null`, `sourceProvenance: 'unknown-native'` and retains the separately verified `targetRevision` and image digest. It never infers compiled provenance from Git HEAD. The closed observed `sourceCompatibility` and both provenance fields are persisted in metadata/journal, cannot migrate, and managed preparation is compared with the fresh Bridge observation before capture. Sampling does not establish source-image byte identity or bind the archive to a source revision.
+
+Managed `--image` overrides are unchecked and refused for this profile; use the officially verified resolution. The operator API with `--journal` independently resolves that same official source contract and compares it to the supplied immutable digest before capture. A source reached through a private tunnel still uses a loopback origin and the existing dedicated source control token; the target must have a distinct dedicated token. Neither source tokens nor real workspace contents belong in source, logs or portable examples.
+
+New profile records allocate one recovery UUID and positive safe integer epoch before cloud entry. The same values reach idle creation and active bootstrap, and survive calls/restarts without incrementing or replacing them. Target configuration sets worker mode, network exposure, explicit `FLUJO_WORKER_SNAPSHOT_SOURCE=1`, persistent `/data`, and `always` restart without public services. Its image/owner/identity, environment, launch command, mounts, restart and execution overrides are checked against the saved profile before a proxy or model POST. Extra containers/processes, guest-file injection, boot overrides, automatic destruction or scheduled starts are refused. Resource resizing alone does not change this execution profile.
+
+All restored flows remain callable by exact ID, including legitimate additions after restore; the pinned `defaultFlowIds` is not a scope allowlist. A renamed flow is routed using its current unique name. A deleted default, duplicate name, multiple defaults or absent default requires explicit selection or refusal, never an automatic replacement. Several flows without a default and an initially empty workspace may still be captured. This is a durable workspace clone, not bidirectional/live synchronization or a clone of running OS services/keyrings/external file roots.
+
+Worker/bootstrap readiness still checks the assigned workspace/archive digest; there is no new worker-status capability field. The CLI lock excludes overlapping local commands, and existing journals continue to record resource provisioning and owned app destruction. O/FACTORY must supply durable admission and reconciliation of model/provider effects, OFF enforcement and protection against unsafe replay; the CLI lock supplies none of that authority. Unknown/interrupted provisioning or profile/identity mismatches cannot be replayed or upgraded by another `up`/`call`. The controller must reconcile model/provider effects before authorizing new work; restart does not authorize a resend, schedule enrollment or discarded history.
+
+This profile has source fixtures, not a retained live acceptance result. The unchanged September 6 record continues to establish the earlier selected-flow Codex/Astra/GitHub/filesystem MCP path. Full workspace cloning, both subscriptions, communicating flows, scheduler recovery, actual MCP/tools, private phone voice and PC-off operation require separate image/runtime evidence.
 
 ## 5. Call the flow
 

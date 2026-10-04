@@ -11,6 +11,7 @@ sources                         Discover native local FLUJO instances.
 workspaces [--source URL]        List workspaces on the selected instance.
 preflight --workspace NAME      Verify setup and compatible official image.
 up --workspace NAME [--flow ID_OR_NAME ...]
+   [--profile flow|private-workspace]
    [--source URL] [--org SLUG] [--region iad] [--app NEW_NAME]
    [--memory-mb 2048] [--volume-gb 2] [--timeout-seconds 600]
 list                            List managed deployment records.
@@ -23,6 +24,9 @@ worker names, journals and control credentials are managed automatically.
 Fly CLI must be installed and signed in. Multiple instances/organizations need
 an explicit selection. Calls run configured tools unattended; submit only tasks
 and external actions you have authorized. Prompts append a new conversation turn.
+private-workspace captures the whole workspace; --flow only selects call defaults.
+It requires a checked official capability image and creates a new always-on worker.
+Existing workers keep their recorded profile; no model replay/dedup is provided.
 
 Advanced/operator mode remains available with --journal PATH:
 up --app NAME --org SLUG --region REGION --workspace NAME
@@ -44,7 +48,7 @@ try {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: Object.fromEntries([
-      'app', 'org', 'region', 'workspace', 'image', 'journal', 'source', 'auth-state',
+      'app', 'org', 'region', 'workspace', 'image', 'journal', 'source', 'auth-state', 'profile',
       'memory-mb', 'volume-gb', 'timeout-seconds', 'max-snapshot-mib', 'request', 'conversation-id', 'flows', 'channel', 'prompt',
     ].map((name) => [name, { type: 'string' }]).concat([
       ['flow', { type: 'string', multiple: true }], ['help', { type: 'boolean', short: 'h' }],
@@ -56,6 +60,7 @@ try {
     const command = positionals[0];
     if (!['sources', 'workspaces', 'preflight', 'up', 'list', 'call', 'down'].includes(command)
       || positionals.length > (['call', 'down'].includes(command) && !values.journal ? 2 : 1)) throw new Error('Invalid command. Use --help for usage.');
+    if (values.profile !== undefined && !['preflight', 'up'].includes(command)) throw new Error('--profile is only supported for preflight and new up deployments.');
     const progress = (message) => process.stderr.write(`${message}\n`);
     const managed = new ManagedCloud({ progress });
     const operator = Boolean(values.journal);
@@ -70,6 +75,7 @@ try {
       const options = {
         app: values.app, org: values.org, region: values.region, workspace: values.workspace,
         image: values.image, journal: values.journal, source: values.source, authState: values['auth-state'],
+        profile: values.profile,
         channel: values.channel,
         memoryMb: values['memory-mb'], volumeGb: values['volume-gb'], timeoutMs,
         maxSnapshotBytes: Number(values['max-snapshot-mib'] ?? 256) * 1024 * 1024,

@@ -76,6 +76,12 @@ If the target's journal release or metadata binding is uncertain, its own manage
 
 ## Documentation
 
+### Recipient-encrypted native snapshots
+
+When authenticated source metadata advertises the exact recipient-encrypted v2 contract, ordinary bootstrap and full-workspace clone require an officially resolved immutable image with the matching read-version/default-limit labels. The bridge retains a fresh independent 32-byte recipient key privately before native begin, authenticates the v2 envelope with `flujo:workspace-snapshot:v2`, and uploads the same encrypted wire bytes and SHA-256. It does not rewrap v2 or downgrade an unsupported advertised contract. Old sources without encryption metadata keep the original client-encrypted v1 path and record shape.
+
+The new key recovery sidecar is `<journal>.snapshot-key-v2/recipient-key.json`, outside the journal and Machine config. Store the journal parent and sidecar in existing owner-protected private storage outside Git and portable handoffs. Sidecars are ignored by Git, but an ignore rule is not a privacy boundary. Existing sidecars are never adopted, overwritten or automatically deleted, including after ready or uncertain outcomes. A matching native terminal ACK establishes session state only. Live encrypted image/restore/MCP, Windows crash durability, both provider subscriptions and PC-off qualification remain separate requirements. See the [transfer contract and recovery limits](docs/deployment.md#recipient-encrypted-v2-transfer).
+
 - [Managed deployment guide](docs/deployment.md): preparation, commands, selection, recovery and cleanup.
 - [Architecture and deployment diagram](docs/architecture.md): repository boundaries, discovery, image selection, credentials and persistence.
 - [Operator guide](docs/operator-guide.md): explicit images/journals, custom environments, the three-worker GitHub example and infrastructure diagnostics.

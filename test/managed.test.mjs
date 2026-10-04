@@ -3,17 +3,23 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createCipheriv, createDecipheriv } from 'node:crypto';
 import { ManagedCloud } from '../lib/managed.mjs';
 import { CloudBridge, buildMachineConfig } from '../lib/bridge.mjs';
 import { sha256 } from '../lib/envelope.mjs';
 import { Journal } from '../lib/journal.mjs';
 import { ensurePrivateDirectory, readPrivateJson, writePrivateJson } from '../lib/private-files.mjs';
+import { snapshotTransferContract } from '../lib/transfer.mjs';
 
 const sourceToken = 'synthetic_source_private_01234567890123456789';
 const origin = 'http://127.0.0.1:43451';
 const image = `ghcr.io/mario-andreschak/flujo@sha256:${'a'.repeat(64)}`;
 const compatibility = { applicationVersion: '3.45.0', snapshotFormatVersion: 2, layoutVersion: 2, workerProtocolVersion: 1 };
+const v2Native = { snapshotEncryption: { format: 'flujo-workspace-encrypted', cipher: 'aes-256-gcm', writeVersion: 2,
+  readVersions: [1, 2], legacyPlaintextRead: true, recipientKeyRequired: true, recipientKeyBytes: 32,
+  recipientKeyEncoding: 'base64', v2Aad: 'flujo:workspace-snapshot:v2', v2Digest: 'sha256-encrypted-wire',
+  v1Digest: 'sha256-plaintext-zip' }, snapshotLimits: { maxFileBytes: 268435456, maxUncompressedBytes: 1073741824,
+  maxManifestBytes: 8388608, maxArchiveBytes: 1082130432, maxEncryptedBytes: 1442844672, maxMembers: 65534 } };
 
 async function fixture(t) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'flujo-managed-test-'));
@@ -546,7 +552,7 @@ test('managed unknown-native source provenance persists without inferring a chec
 
 // Exercise the real ManagedCloud -> CloudBridge -> snapshot -> provisioning
 // path. Only transport is synthetic; these fixtures open no sockets or services.
-async function cloneFixture(t) {
+async function cloneFixture(t, { encrypted = false } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'flujo-hot-clone-test-'));
   t.after(async () => {
     const relative = path.relative(os.tmpdir(), directory);
@@ -558,6 +564,7 @@ async function cloneFixture(t) {
   const revision = 'b'.repeat(40), bootstrapHash = '9'.repeat(64);
   const currentBytes = Buffer.from('synthetic changed workspace containing all flows and portable dependencies');
   const currentHash = sha256(currentBytes), session = randomUUID();
+  let wireBytes = currentBytes, wireHash = currentHash;
   const state = { calls: [], requests: [], proxies: [], events: [], discoverCalls: 0,
     flows: [{ id: 'default-agent-flujo', name: 'FLUJO' }, { id: 'other-flow', name: 'Other Flow' }],
     snapshotState: 'ready', sourceRevision: revision };
@@ -582,6 +589,8 @@ async function cloneFixture(t) {
       if (group === 'secrets' && command === 'import') {
         secrets.set(app, options.input.trim().split('\n').map(line => ({ Name: line.slice(0, line.indexOf('=')) })));
         state.targetToken = JSON.parse(options.input.split('\n').find(line => line.startsWith('FLUJO_SNAPSHOT_CONTROL_TOKEN=')).slice('FLUJO_SNAPSHOT_CONTROL_TOKEN='.length));
+        if (encrypted) state.importedKey = JSON.parse(options.input.split('\n')
+          .find(line => line.startsWith('FLUJO_WORKER_SNAPSHOT_KEY=')).slice('FLUJO_WORKER_SNAPSHOT_KEY='.length));
         return '';
       }
       if (group === 'volumes' && command === 'create') return JSON.stringify({ id: 'vol_target', name: args[2] });
@@ -627,27 +636,44 @@ async function cloneFixture(t) {
     if (url.pathname === '/api/worker/status') {
       if (app === worker) return Response.json({ mode: 'worker', state: 'ready', workspace: 'test-cloud', archiveSha256: bootstrapHash });
       await assertSourceLocked(); await state.onTargetReady?.();
-      return Response.json({ mode: 'worker', state: 'ready', workspace: 'test-cloud', archiveSha256: currentHash });
+      return Response.json({ mode: 'worker', state: 'ready', workspace: 'test-cloud', archiveSha256: wireHash });
     }
     assert.equal(app, worker);
     assert.equal(init.headers['x-flujo-workspace'], 'test-cloud');
     if (url.pathname === '/api/flow') return Response.json(state.flows);
     if (url.pathname === '/api/snapshot/info') return Response.json({ workspace: 'test-cloud', capability: 'available',
-      workerCompatibility: { ...contract, ...(state.sourceRevision === undefined ? {} : { revision: state.sourceRevision }) } });
+      workerCompatibility: { ...contract, ...(encrypted ? v2Native : {}),
+        ...(state.sourceRevision === undefined ? {} : { revision: state.sourceRevision }) } });
     await assertSourceLocked();
     if (url.pathname === '/api/snapshot/begin') {
-      assert.equal(init.method, 'POST'); assert.equal(init.body, undefined);
-      assert.equal(init.headers['Content-Type'], undefined);
+      assert.equal(init.method, 'POST');
+      if (encrypted) {
+        const selection = JSON.parse(init.body);
+        assert.deepEqual(Object.keys(selection), ['recipientKey']);
+        assert.equal(init.headers['Content-Type'], 'application/json');
+        const saved = await readPrivateJson(`${managed.paths(state.targetApp).journal}.snapshot-key-v2/recipient-key.json`);
+        assert.equal(selection.recipientKey, saved.key); state.retainedKey = saved;
+        assert.equal(saved.attemptId, (await readPrivateJson(managed.paths(state.targetApp).metadata)).attemptId);
+        const key = Buffer.from(selection.recipientKey, 'base64'), iv = Buffer.alloc(12, 3);
+        const cipher = createCipheriv('aes-256-gcm', key, iv); cipher.setAAD(Buffer.from('flujo:workspace-snapshot:v2'));
+        const data = Buffer.concat([cipher.update(currentBytes), cipher.final()]);
+        wireBytes = Buffer.from(JSON.stringify({ format: 'flujo-workspace-encrypted', version: 2,
+          iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), data: data.toString('base64') }));
+        wireHash = sha256(wireBytes); key.fill(0);
+      } else { assert.equal(init.body, undefined); assert.equal(init.headers['Content-Type'], undefined); }
       state.events.push('snapshot:begin');
       if (state.beginUnknown) throw new Error('Synthetic begin acknowledgement lost.');
-      return Response.json({ workspace: 'test-cloud', sessionId: session, state: 'beginning' }, { status: 202 });
+      return Response.json({ workspace: 'test-cloud', sessionId: session, state: 'beginning',
+        ...(encrypted ? { encryptionVersion: 2 } : {}) }, { status: 202 });
     }
     assert.equal(url.searchParams.get('sessionId'), session);
     if (url.pathname === '/api/snapshot/status') return Response.json({ workspace: 'test-cloud', sessionId: session,
-      state: state.snapshotState, sha256: currentHash });
+      state: state.snapshotState, sha256: wireHash, ...(encrypted ? { encryptionVersion: 2, archiveBytes: wireBytes.length } : {}) });
     if (url.pathname === '/api/snapshot/download') {
       await state.beforeDownload?.();
-      return new Response(Buffer.from(currentBytes), { headers: { 'x-flujo-snapshot-sha256': state.badHash ? 'c'.repeat(64) : currentHash } });
+      return new Response(Buffer.from(wireBytes), { headers: { 'x-flujo-snapshot-sha256': state.badHash ? 'c'.repeat(64) : wireHash,
+        ...(encrypted ? { 'content-type': 'application/vnd.flujo.workspace-snapshot+json',
+          'content-length': String(wireBytes.length) } : {}) } });
     }
     if (url.pathname === '/api/snapshot/finalize') {
       state.events.push('snapshot:finalize-entered');
@@ -655,26 +681,31 @@ async function cloneFixture(t) {
       if (state.finalizeBadJson) return new Response(typeof state.finalizeBadJson === 'string' ? state.finalizeBadJson : 'not-json');
       if (state.finalizeReply) return Response.json(state.finalizeReply);
       state.events.push('snapshot:finalized');
-      return Response.json({ workspace: 'test-cloud', sessionId: session, state: 'finalized' });
+      return Response.json({ workspace: 'test-cloud', sessionId: session, state: 'finalized',
+        ...(encrypted ? { encryptionVersion: 2 } : {}) });
     }
     if (url.pathname === '/api/snapshot/abort') {
       state.events.push('snapshot:abort');
       await state.beforeAbort?.();
       if (state.abortBadJson) return new Response(state.abortBadJson);
-      return Response.json({ workspace: 'test-cloud', sessionId: session, state: 'aborted' }, { status: state.abortRejected ? 409 : 200 });
+      return Response.json({ workspace: 'test-cloud', sessionId: session, state: 'aborted',
+        ...(encrypted ? { encryptionVersion: 2 } : {}) }, { status: state.abortRejected ? 409 : 200 });
     }
     throw new Error('Unexpected synthetic worker endpoint.');
   };
   const resolveImage = async ({ source, profile, image: explicit }) => {
     assert.equal(profile, 'private-workspace');
     if (explicit) return { image: explicit, mode: 'explicit', compatibility: 'unchecked' };
-    return { image, mode: 'official', compatibility: 'verified', ...contract, revision };
+    return { image, mode: 'official', compatibility: 'verified', ...contract, revision,
+      ...(encrypted ? { snapshotEnvelopeReadVersions: [1, 2], snapshotTransfer: snapshotTransferContract(v2Native) } : {}) };
   };
   let port = 46010;
   const bridge = new CloudBridge({ fly, fetchImpl, resolveImage, sleepImpl: async () => undefined, port: async () => port++ });
   const managed = new ManagedCloud({ directory: path.join(directory, 'controller'),
     env: { FLY_API_TOKEN: 'synthetic_fly_api_token_0123456789' }, fly, bridge, fetchImpl, resolveImage,
-    writeJson: async (filename, value, options) => { await state.beforeWrite?.(filename, value, options); await writePrivateJson(filename, value, options); },
+    writeJson: async (filename, value, options) => {
+      if (value.format === 'flujo-managed-deployment' && value.id !== worker) state.targetApp = value.id;
+      await state.beforeWrite?.(filename, value, options); await writePrivateJson(filename, value, options); },
     discover: async () => { state.discoverCalls += 1; return []; } });
   const files = managed.paths(worker);
   await ensurePrivateDirectory(managed.directory); await ensurePrivateDirectory(files.root);
@@ -712,7 +743,8 @@ async function cloneFixture(t) {
     assert.equal(state.requests.some(({ url }) => url.pathname === '/v1/chat/completions'), false);
   }
   return { managed, bridge, state, files, metadata, record, worker, machines, apps, secrets, session, currentHash,
-    assertPreserved, assertReleased, assertNoProvision, assertSourceLocked };
+    assertPreserved, assertReleased, assertNoProvision, assertSourceLocked, wireBytes: () => wireBytes, wireHash: () => wireHash,
+    currentBytes };
 }
 
 test('managed hot clone bypasses empty local discovery, captures current whole workspace and preserves source bytes with fresh target identity', async t => {
@@ -743,6 +775,65 @@ test('clone flow option changes target call default while full capture remains u
   assert.deepEqual((await f.managed.deployment(result.worker)).journal.defaultFlowIds, ['other-flow']);
   assert.equal(f.state.requests.find(r => r.url.pathname === '/api/snapshot/begin').init.body, undefined);
   await f.assertPreserved(); await f.assertReleased();
+});
+
+test('v2 managed hot clone keeps full ciphertext and source bytes with distinct privately retained attempt key', async t => {
+  const f = await cloneFixture(t, { encrypted: true });
+  const result = await f.managed.clone(f.worker, { app: 'synthetic-v2-clone-target', flowIds: ['Other Flow'], timeoutMs: 1000 });
+  const target = await f.managed.deployment(result.worker);
+  const credential = await readPrivateJson(target.files.credentials);
+  const keyRecord = await readPrivateJson(`${target.files.journal}.snapshot-key-v2/recipient-key.json`);
+  assert.equal(keyRecord.attemptId, target.metadata.attemptId);
+  assert.equal(keyRecord.journalOwner, target.journal.owner); assert.equal(keyRecord.app, result.worker);
+  assert.equal(keyRecord.workspace, target.journal.workspace); assert.equal(keyRecord.image, target.journal.image);
+  assert.notEqual(keyRecord.key, credential.token); assert.notEqual(credential.token, sourceToken);
+  assert.notEqual(target.metadata.attemptId, f.metadata.attemptId); assert.notEqual(target.metadata.recoveryId, f.metadata.recoveryId);
+  assert.notEqual(target.journal.owner, f.record.owner); assert.equal(target.metadata.recoveryEpoch, 1);
+  assert.equal(f.state.importedKey, keyRecord.key);
+  assert.deepEqual(f.state.uploaded, f.wireBytes()); assert.equal(target.journal.archiveSha256, sha256(f.state.uploaded));
+  assert.notEqual(target.journal.archiveSha256, f.currentHash);
+  const wire = JSON.parse(f.state.uploaded), key = Buffer.from(keyRecord.key, 'base64');
+  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(wire.iv, 'base64'));
+  decipher.setAAD(Buffer.from('flujo:workspace-snapshot:v2')); decipher.setAuthTag(Buffer.from(wire.tag, 'base64'));
+  assert.deepEqual(Buffer.concat([decipher.update(Buffer.from(wire.data, 'base64')), decipher.final()]), f.currentBytes); key.fill(0);
+  assert.deepEqual(target.journal.defaultFlowIds, ['other-flow']);
+  assert.equal(target.metadata.snapshotTransfer.encryptionVersion, 2);
+  assert.equal(Object.hasOwn(f.metadata, 'snapshotTransfer'), false);
+  assert.deepEqual(Object.keys(JSON.parse(f.state.requests.find(r => r.url.pathname === '/api/snapshot/begin').init.body)), ['recipientKey']);
+  assert.equal(f.state.requests.filter(r => r.url.pathname === '/api/snapshot/begin').length, 1);
+  assert.equal(f.state.discoverCalls, 0);
+  for (const value of [target.metadata, target.journal, f.machines.get(result.worker).config,
+    f.state.calls.map(call => call.args)]) assert.equal(JSON.stringify(value).includes(keyRecord.key), false);
+  assert.ok(f.state.proxies.every(proxy => !proxy.active && proxy.stopCalls === 1));
+  await f.assertPreserved(); await f.assertReleased();
+});
+
+test('v2 clone lost begin retains source/target holds and exact key without provisioning or implicit replay', async t => {
+  const f = await cloneFixture(t, { encrypted: true }); f.state.beginUnknown = true;
+  const target = 'synthetic-v2-clone-lost-begin';
+  await assert.rejects(f.managed.clone(f.worker, { app: target, timeoutMs: 1000 }), { code: 'CLONE_SOURCE_CLEANUP_UNKNOWN' });
+  const files = f.managed.paths(target), filename = `${files.journal}.snapshot-key-v2/recipient-key.json`;
+  const before = await fs.readFile(filename);
+  await fs.lstat(f.files.operationLock); await fs.lstat(`${f.files.journal}.lock`); await fs.lstat(files.operationLock);
+  assert.equal(f.state.requests.filter(r => r.url.pathname === '/api/snapshot/begin').length, 1);
+  f.assertNoProvision(); await f.assertPreserved();
+  await assert.rejects(f.managed.clone(f.worker, { app: 'synthetic-forbidden-v2-replay' }), { code: 'MANAGED_BUSY' });
+  assert.deepEqual(await fs.readFile(filename), before);
+});
+
+test('v2 clone preserves ready target and retained key when source proxy cleanup is unknown', async t => {
+  const f = await cloneFixture(t, { encrypted: true }); f.state.sourceStopUnknown = true;
+  const target = 'synthetic-v2-clone-source-close-unknown'; let ready;
+  await assert.rejects(f.managed.clone(f.worker, { app: target, timeoutMs: 1000 }), error => {
+    assert.equal(error.code, 'CLONE_SOURCE_CLEANUP_UNKNOWN'); ready = error.targetResult;
+    assert.equal(ready.state, 'ready'); return true;
+  });
+  const stored = await f.managed.deployment(target);
+  assert.equal(stored.metadata.phase, 'ready'); assert.equal(stored.journal.archiveSha256, f.wireHash());
+  assert.equal((await readPrivateJson(`${stored.files.journal}.snapshot-key-v2/recipient-key.json`)).key, f.state.importedKey);
+  await fs.lstat(f.files.operationLock); await fs.lstat(`${f.files.journal}.lock`);
+  assert.equal(f.state.calls.filter(({ args }) => args[0] === 'apps' && args[1] === 'create').length, 1);
+  await f.assertPreserved();
 });
 
 test('clone source and identity overrides are refused without discovery, capture, provisioning or credential replacement', async t => {

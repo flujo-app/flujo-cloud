@@ -1,0 +1,58 @@
+{
+  "format": "phone-voice-reply-playback-source-checks",
+  "version": 1,
+  "sourceBase": "954906f13435b732defbed2f3f2f0bbe972c1d4b",
+  "scope": "Source addon for explicit completed-response browser playback; no deployed or native avatar authority",
+  "sourcePins": [
+    {
+      "path": "reply-playback.mjs",
+      "bytes": 5838,
+      "sha256": "dd540ccf1e36db65ca2fc1ad6ccd62d3803c82cbcd08bac833578aa7d4c2087a"
+    },
+    {
+      "path": "reply-playback.test.mjs",
+      "bytes": 12422,
+      "sha256": "cc16cb6f46950081052058877a0d02ef182f3815a916c7bb45b688ec6379e592"
+    }
+  ],
+  "firstAuthorRun": {
+    "node": "24.19.0",
+    "startedAtUtc": "2026-10-04T13:41:38.4068661Z",
+    "completedAtUtc": "2026-10-04T13:41:38.6260005Z",
+    "newTestFileExecutions": 1,
+    "tests": 14,
+    "passed": 14,
+    "failed": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "exitCode": 0,
+    "sourceBeforeAfterExact": true,
+    "stdoutBytes": 3640,
+    "stdoutSha256": "e02aa3ad7f00c8c927c987afed9ca339e8bf52543c81161f6b000c0387ec1517",
+    "stderrBytes": 0,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "fixtures": "Injected DOM/controller, local snapshot and supplied service-status objects only"
+  },
+  "independentStaticReview": {
+    "state": "PASS_SOURCE_ONLY",
+    "scope": "Independent model static review of exact helper, test and handoff; no new scoped blocker",
+    "reviewedHandoffBytes": 5017,
+    "reviewedHandoffSha256": "e29e3d40f82cda1387664e50ee6babc151169138952ce5807cc793908337105d",
+    "savedAuthorStatusSha256": "9c36605a4a45c65d5020ceed13c495cce1389693287f111d5bf9f4f778706dc1",
+    "reviewerExecutions": 0,
+    "modelSourceReviewNotHumanOrRuntimeAcceptance": true
+  },
+  "hostedCI": {
+    "confirmed": false,
+    "stateAtSourcePublication": "NOT_STARTED"
+  },
+  "limits": [
+    "No actual browser, microphone, speech synthesis, provider, HTTP, Fly, Modal or resource operation",
+    "Trusted authenticated parsed JSON and host callbacks, not arbitrary hostile JavaScript objects",
+    "Click-time client observations, not fresh remote polling, canonical acceptance or native authority",
+    "Future recording can still begin during speech; duplex exclusion and physical cancellation are unqualified",
+    "A recording cap does not prevent local reply synthesis; voiceReady is intentionally not required",
+    "Existing production browser/gateway/STT modules and frozen PR8 remain unchanged",
+    "Actual deployment, real-phone/Spanish/audible acceptance, hot cloning and full O supervision remain incomplete"
+  ]
+}

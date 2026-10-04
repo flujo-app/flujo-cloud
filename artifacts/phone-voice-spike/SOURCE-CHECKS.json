@@ -43,6 +43,26 @@
   "actualModalVolumeCalls": 0,
   "resourcesProvisioned": 0,
   "deployed": false,
+  "frozenHeadHostedCi": {
+    "head": "66840e42cedbb430744907c5cfe0b480a5ae0417",
+    "workflow": "https://github.com/flujo-app/flujo-cloud/actions/runs/37200990758",
+    "node": "22.23.3",
+    "ubuntu": { "total": 236, "passed": 235, "skipped": 1, "failed": 0, "durationSeconds": 3.143566 },
+    "windows": { "total": 236, "passed": 228, "skipped": 0, "failed": 8, "durationSeconds": 652.2269876, "completedAtUtc": "2026-10-04T12:17:56Z", "smokeAndExports": "SKIPPED" },
+    "failureScope": "Eight gateway fixtures fail before any injected POST/terminal; a short Windows temp-path alias conflicting with the canonical-root guard is the current hypothesis, not native runtime proof.",
+    "frozenPr8Held": true
+  },
+  "windowsFixtureSuccessor": {
+    "base": "66840e42cedbb430744907c5cfe0b480a5ae0417",
+    "runtime": "Node24.19.0 on Windows",
+    "firstFocusedAttempt": { "groups": 14, "passed": 14, "failed": 0, "skipped": 0, "exitCode": 0 },
+    "fixtureSha256": "deaa0105cf6eec5a5e71f6e8e841ed42fbec5f45f8e3e6e66944969a51129d64",
+    "productionModuleSha256": "aab9b08b2ebfdffd8e53c58f21dbe04615627caee98c53168bd4d7102ff74ad0",
+    "correction": "Canonicalize the temp parent before mkdtemp; verify resolved/actual root containment before recursive cleanup; simulate an unresolved root alias and retain zero transport/entries on refusal.",
+    "independentStaticReview": "PASS; unchanged production guard; no review test/import execution or native alias proof",
+    "hostedSuccessorConfirmed": false,
+    "runtimeAdopted": false
+  },
   "limits": [
     "Gateway fixtures use own temporary filesystem files and injected transports; Windows directory fsync is deliberately not qualified.",
     "STT fixtures use fake decoder/model/RAM journal/syscall/Volume behavior, not physical FileJournal or Modal persistence.",

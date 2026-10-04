@@ -138,7 +138,8 @@ export async function collectGatewayWorkerGraphs(config, { fetchImpl = globalThi
   timeoutMs = 10_000, includeUiLinks = false } = {}) {
   if (typeof fetchImpl !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 30_000
     || typeof includeUiLinks !== 'boolean') throw new Error('Invalid graph observation options.');
-  const selected = configuration(config), tokens = selected.map(worker => worker.token);
+  const selected = configuration(config);
+  const tokenForms = selected.flatMap(worker => [worker.token, JSON.stringify(worker.token).slice(1, -1)]);
   const report = { format: 'flujo-gateway-worker-graphs', version: 1, observedAt: canonicalTime(),
     source: { kind: fetchImpl === globalThis.fetch ? 'configured-worker-http' : 'injected-http', sample: false,
       ownershipVerified: false, machineRouting: 'configured-app-origin' },
@@ -176,7 +177,7 @@ export async function collectGatewayWorkerGraphs(config, { fetchImpl = globalThi
       if (!observation.collections[key].available && !errors[key]) errors[key] = 'INVALID_INVENTORY';
     }
     const serialized = JSON.stringify(observation);
-    if (tokens.some(token => serialized.includes(token))) {
+    if (tokenForms.some(token => serialized.includes(token))) {
       Object.assign(observation, empty());
       observation.status = { available: false, state: 'unknown', code: 'KNOWN_SECRET_REFUSED' };
     } else if (Object.keys(errors).length) observation.errors = errors;

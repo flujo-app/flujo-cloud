@@ -100,3 +100,11 @@ node --test --test-concurrency=1 artifacts/gateway-worker-graph/project-inventor
 These checks use fictional data and injected transport. Actual worker GETs,
 gateway route adoption, authenticated World graph rendering and voice remain
 separate Root-owned acceptance work.
+
+Source validation on October4 used bundled Node24.19.0:19 pure projector cases
+passed once; the initial11 collector groups passed, then independent static review
+of commit128d5d35 found a JSON-escaping gap in the configured-token label guard.
+The correction checks both raw and JSON-escaped token forms. Its12 collector
+groups passed, including the new quote/backslash regressions. These are fixture
+and source results, not native worker calls; no runtime privacy incident was
+observed. The original candidate and its review finding remain in Git history.

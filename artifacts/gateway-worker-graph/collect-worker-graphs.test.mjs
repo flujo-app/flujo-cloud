@@ -132,6 +132,19 @@ test('known worker token in an otherwise printable projected label refuses the e
   assert.equal(JSON.stringify(worker).includes(input.workers[0].token), false);
 });
 
+test('JSON-escaped quote and backslash token values are refused before any observation is returned', async () => {
+  for (const token of ['synthetic"token_012345678901234567890', 'synthetic\\token_012345678901234567890']) {
+    const input = config(); input.workers = [{ ...input.workers[0], token }];
+    const fake = fixture(url => url.pathname === '/api/model' ? json([{ id: 'model_1', name: token }]) : json(values('fixture-dev')[url.pathname]));
+    const worker = (await collectGatewayWorkerGraphs(input, { fetchImpl: fake.fetchImpl })).workers[0];
+    assert.equal(worker.status.code, 'KNOWN_SECRET_REFUSED');
+    assert.deepEqual(worker.models, []); assert.deepEqual(worker.flows, []);
+    const serialized = JSON.stringify(worker);
+    assert.equal(serialized.includes(token), false);
+    assert.equal(serialized.includes(JSON.stringify(token).slice(1, -1)), false);
+  }
+});
+
 test('a single deadline bounds a never-settling fetch and all remaining targets, with zero retries', async () => {
   const input = config(), calls = [];
   const started = performance.now();

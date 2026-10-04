@@ -352,3 +352,55 @@ test('retains explicit immutable custom images without pretending to verify thei
     await assert.rejects(resolveWorkerImage({ image: invalid }), { code: 'IMAGE_OVERRIDE_INVALID' });
   }
 });
+
+test('private-workspace checks exact source revision and snapshot-source label on verified OCI config', async () => {
+  const f = fixture({ index: true, labels: { 'io.flujo.worker.snapshot-source': '1' } });
+  const source = { ...SOURCE, revision: REVISION, workerSnapshotSourceVersion: 1 };
+  // Missing revision/version tags may fall through, but the selected config
+  // must STILL match the exact source revision, not merely application version.
+  const selected = await f.resolve({ source, profile: 'private-workspace' });
+  assert.equal(selected.image, `${IMAGE}@${f.manifest.digest}`);
+  assert.equal(selected.revision, REVISION);
+  assert.equal(selected.workerSnapshotSourceVersion, 1);
+  assert.equal(selected.compatibility, 'verified');
+});
+
+test('private-workspace refuses absent/wrong image capability and exact-revision mismatch', async () => {
+  const source = { ...SOURCE, revision: REVISION, workerSnapshotSourceVersion: 1 };
+  for (const marker of [undefined, '0', '2', 1]) {
+    const f = fixture({ labels: marker === undefined ? {} : { 'io.flujo.worker.snapshot-source': marker } });
+    await assert.rejects(f.resolve({ source, profile: 'private-workspace' }), { code: 'IMAGE_PROFILE_CAPABILITY' });
+  }
+  for (const channel of [undefined, 'cloud-worker']) {
+    const f = fixture({ labels: { 'io.flujo.worker.snapshot-source': '1', 'org.opencontainers.image.revision': 'b'.repeat(40) } });
+    await assert.rejects(f.resolve({ source, profile: 'private-workspace', channel }), { code: 'IMAGE_IDENTITY' });
+  }
+});
+
+test('private-workspace refuses unknown source capability/revision and unchecked custom images before registry access', async () => {
+  let requests = 0;
+  const fetchImpl = async () => { requests += 1; throw new Error('must not fetch'); };
+  for (const source of [SOURCE, { ...SOURCE, revision: REVISION, workerSnapshotSourceVersion: '1' },
+    { ...SOURCE, revision: REVISION, workerSnapshotSourceVersion: 2 }, { ...SOURCE, revision: null, workerSnapshotSourceVersion: 1 }]) {
+    await assert.rejects(resolveWorkerImage({ source, profile: 'private-workspace', fetchImpl }));
+  }
+  await assert.rejects(resolveWorkerImage({ source: { ...SOURCE, revision: REVISION, workerSnapshotSourceVersion: 1 },
+    profile: 'private-workspace', image: `${IMAGE}@sha256:${'e'.repeat(64)}`, fetchImpl }), { code: 'IMAGE_PROFILE_UNCHECKED' });
+  assert.equal(requests, 0);
+});
+
+test('legacy images keep their original resolver result even with a source capability marker', async () => {
+  const f = fixture();
+  const selected = await f.resolve({ source: { ...SOURCE, workerSnapshotSourceVersion: 1 } });
+  assert.equal(Object.hasOwn(selected, 'workerSnapshotSourceVersion'), false);
+  assert.equal(selected.compatibility, 'verified');
+});
+
+test('unknown-native source revision still requires verified official OCI target identity, digest and capability', async () => {
+  const f = fixture({ labels: { 'io.flujo.worker.snapshot-source': '1' } });
+  const selected = await f.resolve({ source: { ...SOURCE, workerSnapshotSourceVersion: 1 }, profile: 'private-workspace' });
+  assert.equal(selected.revision, REVISION);
+  assert.equal(selected.image, `${IMAGE}@${f.manifest.digest}`);
+  assert.equal(selected.workerSnapshotSourceVersion, 1);
+  assert.equal(selected.compatibility, 'verified');
+});

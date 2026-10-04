@@ -4,9 +4,9 @@ Run an existing FLUJO flow on a private Fly Machine. The CLI discovers your loca
 
 ## Get started
 
-You need Node.js 22+, access to this private repository, an installed and signed-in Fly CLI, and **native** FLUJO running locally with discovery support. Configure and test the flow in FLUJO first; unlock its workspace before cloning.
+You need Node.js 22+, the bridge source checkout, an installed and signed-in Fly CLI, and **native** FLUJO running locally with discovery support. Configure and test the flow in FLUJO first; unlock its workspace before cloning.
 
-Start FLUJO with `npx flujo-ai@3.45.2`; no FLUJO Git checkout or local build is required. This version includes native discovery and the Windows startup fix. See [source setup](docs/deployment.md#1-prepare-flujo-locally) for data locations and checkout alternatives. Install the cloud CLI from its private Git repository:
+Start FLUJO with `npx flujo-ai@3.45.2`; no FLUJO Git checkout or local build is required. This version includes native discovery and the Windows startup fix. See [source setup](docs/deployment.md#1-prepare-flujo-locally) for data locations and checkout alternatives. The private workspace profile additionally requires the paired source and image capability described [below](#clone-an-entire-private-workspace); these installation instructions do not establish that capability. Install the cloud CLI from its Git repository:
 
 ```text
 git clone https://github.com/flujo-app/flujo-cloud.git
@@ -41,6 +41,25 @@ Worker credentials and deployment records are kept privately under `~/.flujo-clo
 
 This copies durable workspace state. It does not export arbitrary OS keyrings, move running desktop services or synchronize later changes back. Supported file-backed Codex subscription authentication worked in the recorded test; copied refresh credentials do not provide independent long-term logins. Use a dedicated workspace: selecting a flow limits its execution scope but does not redact other workspace data or credentials.
 
+## Clone an entire private workspace
+
+`--profile private-workspace` explicitly creates a new always-on worker with full workspace dependency capture. The default remains the original flow profile; existing records and workers are never upgraded automatically.
+
+```text
+node bin/flujo-cloud.mjs preflight --workspace test-cloud --profile private-workspace --flow FLUJO
+node bin/flujo-cloud.mjs up --workspace test-cloud --profile private-workspace --flow FLUJO
+```
+
+Here `--flow` chooses the default for later calls. Capture omits the snapshot API's flow selection, so all workspace flows and enabled portable MCP dependencies remain available. An explicit exact flow ID on `call` can address a legitimate flow created or changed in the restored workspace later. The bridge resolves its current unique name at call time. A missing or ambiguous default requires an explicit flow; it does not silently select a replacement.
+
+This profile requires paired FLUJO support: authenticated snapshot info must report numeric `workerSnapshotSourceVersion: 1`, and the selected official immutable image must have the verified OCI label `io.flujo.worker.snapshot-source="1"` and matching application/snapshot/layout/protocol contract. A reported source build revision must match the verified target revision. Native sources without a reported revision are recorded as `sourceRevision: null`, `sourceProvenance: "unknown-native"`; their checkout HEAD is never inferred. The known target revision/digest and observed source contract remain bound to the deployment. Unchecked custom image overrides are refused.
+
+The new worker uses private Fly networking, no public services, persistent data, a dedicated control credential, `always` restart and a UUID/positive recovery epoch allocated once and retained in its records. Current Machine execution configuration and immutable profile/provenance bindings must still match before use. The existing `on-failure` flow workers retain their original behavior.
+
+Preflight checks declared compatibility; full capture must actually reach ready and pass archive SHA verification before any provisioning. There is no source MCP-portability Boolean. This clones a durable point in time, not live synchronization or running desktop services. Source info is sampled and does not attest archive/code provenance. Restart policy and the CLI lock do not provide durable model-call deduplication, OFF authority or safe replay of unknown work; the owning controller must enforce those boundaries.
+
+No live deployment of this new profile is claimed here. The retained September 6 validation covers the established flow path. New image/profile tests use synthetic runners, fetch responses and credentials; actual subscriptions, MCP/tool execution, automation continuity, private voice and PC-off recovery need their own qualification. See [profile details](docs/deployment.md#private-workspace-profile).
+
 ## Documentation
 
 - [Managed deployment guide](docs/deployment.md): preparation, commands, selection, recovery and cleanup.
@@ -49,6 +68,6 @@ This copies durable workspace state. It does not export arbitrary OS keyrings, m
 - [Managed CLI validation](docs/managed-cli-validation-2026-09-06.md): official publication, automatic setup and execution with the local source stopped.
 - [Verified GitHub MCP run](docs/github-mcp-validation-2026-09-05.md): comments, Machine IDs, concurrent execution and limits.
 
-The CLI is in this private [flujo-app/flujo-cloud](https://github.com/flujo-app/flujo-cloud) repository. Native discovery, snapshot/restore, worker images and execution live in [mario-andreschak/FLUJO](https://github.com/mario-andreschak/FLUJO). A future MCP wrapper can use the same `ManagedCloud` methods; this repository does not yet expose an MCP server.
+The CLI source is in [flujo-app/flujo-cloud](https://github.com/flujo-app/flujo-cloud). Native discovery, snapshot/restore, worker images and execution live in [mario-andreschak/FLUJO](https://github.com/mario-andreschak/FLUJO). Deployment metadata and credentials remain privately stored outside this source repository. A future MCP wrapper can use the same `ManagedCloud` methods; this repository does not yet expose an MCP server.
 
 Run `npm test` and `npm run smoke` for synthetic tests and offline CLI checks. They require no cloud resources or real credentials.

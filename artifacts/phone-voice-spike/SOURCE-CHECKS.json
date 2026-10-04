@@ -30,6 +30,12 @@
     "integrationCondition": "Entered uncertainty must remain409/503 UNKNOWN, never a browser-recognized definite4xx refusal"
   },
   "accounting": "Groups and repeated attempts overlap; these are not aggregate distinct security conditions or model checks.",
+  "modalSdkCompatibility": {
+    "version": "1.5.5",
+    "method": "SHA256-verified publisher wheel inspected in memory for exactly the used API signatures and Python micro selector",
+    "sdkImportsInstallsExecutions": 0,
+    "scope": "Source compatibility only; not deployment/server/runtime acceptance"
+  },
   "actualMicrophoneCalls": 0,
   "actualDecoderCalls": 0,
   "actualModelCalls": 0,

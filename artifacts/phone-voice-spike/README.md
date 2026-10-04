@@ -114,7 +114,11 @@ never a raw upstream error. There is no reset, deletion or replay API.
 
 Root must explicitly provision the new named private cache/journal Volumes and
 auth Secret before deploying `stt_app.py`; `create_if_missing=False` prevents
-implicit Volume creation. The selected app requests2 CPU,2GiB, one maximum
+implicit Volume creation. Root's installed Modal1.5.5 matches the used APIs
+and Python micro-version selector in the SHA256-verified publisher package;
+no downgrade to the originally researched1.2.4 is needed. This is source
+compatibility evidence, without actual SDK execution or deployment.
+The selected app requests2 CPU,2GiB, one maximum
 container/input, zero minimum containers and60second scale-down. Replacement
 must not overlap another writer of the same journal. Weights download only at
 runtime into the private cache, never during image build or into Git/artifacts.

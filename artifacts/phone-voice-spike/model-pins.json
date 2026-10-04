@@ -5,7 +5,14 @@
   "python": "3.12.11",
   "modalDeployClient": "1.5.5",
   "originallyResearchedModalReference": "1.2.4",
-  "modalCompatibilityScope": "Author checked the used APIs and Python micro-version selector against primary v1.2.4 source. Root's actual installed v1.5.5 is the proposed deployment client; its separate bounded compatibility review is owned by Root/runtime reviewer. No deployment or need to install v1.2.4 is implied.",
+  "modalCompatibilityScope": "The used API signatures and Python micro-version selector were checked against the exact SHA256-verified publisher Modal1.5.5 wheel in memory, without SDK imports, installation, execution or API calls. This supports source compatibility for Root's installed deployment client, not actual deployment or server behavior. The original v1.2.4 research remains retained; no downgrade is needed.",
+  "modalSdkPublisherArtifact": {
+    "filename": "modal-1.5.5-py3-none-any.whl",
+    "sha256": "8d10d3ee09818aaba1973b73ce2521ab8961b63a29b5b52e3ff0d25e7a74808e",
+    "primaryUrl": "https://files.pythonhosted.org/packages/04/19/b3dca8baec119126058b12ca620e44022e4d08a091956668bd04180c89a7/modal-1.5.5-py3-none-any.whl",
+    "checkedApis": ["Image.debian_slim python3.12.11", "Image.add_local_file copy=True", "Volume.from_name create_if_missing=False", "Secret.from_name required_keys", "App.function cpu/memory/timeout/min_containers/max_containers/scaledown_window", "concurrent max_inputs", "asgi_app"],
+    "githubTagEvidence": "v1.5.5 tag URLs were not retrievable; the verified publisher distribution is the evidence"
+  },
   "packages": {
     "faster-whisper": "1.2.1",
     "ctranslate2": "4.6.0",
@@ -67,6 +74,7 @@
   ],
   "reconciliationFixtureScope": "Saved-completion acknowledgment/failure, descriptor/name replacement, close/fsync failures, post-ack census mutation, nonterminal and corrupt rows use RAM files and mocked syscalls/Volume only. No physical filesystem or Modal durability is established.",
   "primarySources": [
+    "https://pypi.org/project/modal/1.5.5/",
     "https://huggingface.co/Systran/faster-whisper-base/tree/a80717a3a48b1b28aa687bca146cb7301feae1b1",
     "https://huggingface.co/Systran/faster-whisper-base/blob/a80717a3a48b1b28aa687bca146cb7301feae1b1/README.md",
     "https://github.com/SYSTRAN/faster-whisper/blob/v1.2.1/faster_whisper/transcribe.py",

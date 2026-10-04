@@ -7,10 +7,33 @@ const ROUTES = Object.freeze([
   ['models', '/api/model', 2 * 1024 * 1024],
   ['servers', '/api/mcp/servers', 2 * 1024 * 1024],
 ]);
+const MAX_CONFIGURED_WORKERS = 6;
+const MAX_CONFIGURED_GETS = 24;
 const own = (value, key) => Object.getOwnPropertyDescriptor(value, key)?.value;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value)
   && [Object.prototype, null].includes(Object.getPrototypeOf(value));
 const empty = () => projectGatewayInventory({});
+// URI percent-escape hex is case-insensitive; unescaped token letters are not.
+const percentHex = value => value.replace(/%[0-9a-f]{2}/gi, part => part.toUpperCase());
+
+function knownTokenForms(tokens) {
+  if (tokens.length > MAX_CONFIGURED_WORKERS) throw new Error('Invalid worker graph configuration.');
+  const forms = new Set();
+  const add = value => { forms.add(value); forms.add(JSON.stringify(value).slice(1, -1)); };
+  for (const token of new Set(tokens)) {
+    let uriForms;
+    try {
+      uriForms = [encodeURIComponent(token), encodeURI(token),
+        new URLSearchParams({ token }).toString().slice('token='.length)];
+    } catch { throw new Error('Invalid worker graph configuration.'); }
+    const bytes = Buffer.from(token, 'utf8'), base64 = bytes.toString('base64'), hex = bytes.toString('hex');
+    // Known reversible whole-token forms only. Inputs are at most six configured
+    // tokens of at most 4096 characters; this is not a universal secret scanner.
+    for (const value of [token, ...uriForms.map(percentHex), base64, base64.replace(/=+$/, ''),
+      base64.replace(/\+/g, '-').replace(/\//g, '_'), bytes.toString('base64url'), hex, hex.toUpperCase()]) add(value);
+  }
+  return [...forms];
+}
 
 class ObservationError extends Error {
   constructor(code) { super(code); this.code = code; }
@@ -42,8 +65,28 @@ function configuration(config) {
   const selected = workers.map((worker, index) => configuredWorker(worker, `worker-${index + 1}`, index === 0 ? 'developer' : 'reviewer'));
   const codeWorker = own(config, 'codeWorker');
   if (codeWorker !== undefined) selected.push(configuredWorker(codeWorker, 'code-worker', 'code-developer'));
-  const tokens = selected.map(worker => worker.token);
-  if (selected.some(worker => tokens.some(token => worker.workspace.includes(token) || worker.origin.includes(token)))) {
+  for (const key of ['largeWorkers', 'largeCodeWorker']) {
+    const descriptor = Object.getOwnPropertyDescriptor(config, key);
+    if (descriptor && !Object.hasOwn(descriptor, 'value')) throw new Error('Invalid worker graph configuration.');
+  }
+  const largeWorkers = own(config, 'largeWorkers');
+  if (largeWorkers !== undefined) {
+    if (!Array.isArray(largeWorkers) || largeWorkers.length < 1 || largeWorkers.length > 2) {
+      throw new Error('Invalid worker graph configuration.');
+    }
+    for (let index = 0; index < largeWorkers.length; index++) {
+      selected.push(configuredWorker(largeWorkers[index], `large-worker-${index + 1}`, index === 0 ? 'large-developer' : 'large-reviewer'));
+    }
+  }
+  const largeCodeWorker = own(config, 'largeCodeWorker');
+  if (largeCodeWorker !== undefined) selected.push(configuredWorker(largeCodeWorker, 'large-code-worker', 'large-code-developer'));
+  // Bound the configured roles before deduplication: duplicates cannot admit an
+  // oversized configuration or expand the four fixed GETs per configured entry.
+  if (selected.length > MAX_CONFIGURED_WORKERS || selected.length * (ROUTES.length + 1) > MAX_CONFIGURED_GETS) {
+    throw new Error('Invalid worker graph configuration.');
+  }
+  const tokenForms = knownTokenForms(selected.map(worker => worker.token));
+  if (selected.some(worker => tokenForms.some(token => worker.workspace.includes(token) || worker.origin.includes(token)))) {
     throw new Error('Invalid worker graph configuration.');
   }
   const unique = [];
@@ -52,7 +95,7 @@ function configuration(config) {
     if (previous) previous.roles.push(...worker.roles);
     else unique.push(worker);
   }
-  return unique;
+  return { workers: unique, tokenForms };
 }
 
 function discard(body) {
@@ -130,7 +173,9 @@ const canonicalTime = () => new Date().toISOString();
 
 /**
  * Collect sequential metadata from the gateway's trusted, server-side worker configuration.
- * The caller supplies its existing workers/codeWorker object; no credentials are returned.
+ * The caller supplies workers/codeWorker and optional largeWorkers/largeCodeWorker;
+ * no credentials are returned. At most six configured roles admit 24 fixed GETs
+ * before exact origin/workspace/token deduplication, retaining every role label.
  * No Fly ownership, Machine pinning, clone/lifecycle or provider qualification is performed.
  * This module performs only four fixed GET routes per ready worker, with no retries.
  */
@@ -138,8 +183,7 @@ export async function collectGatewayWorkerGraphs(config, { fetchImpl = globalThi
   timeoutMs = 10_000, includeUiLinks = false } = {}) {
   if (typeof fetchImpl !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 30_000
     || typeof includeUiLinks !== 'boolean') throw new Error('Invalid graph observation options.');
-  const selected = configuration(config);
-  const tokenForms = selected.flatMap(worker => [worker.token, JSON.stringify(worker.token).slice(1, -1)]);
+  const { workers: selected, tokenForms } = configuration(config);
   const report = { format: 'flujo-gateway-worker-graphs', version: 1, observedAt: canonicalTime(),
     source: { kind: fetchImpl === globalThis.fetch ? 'configured-worker-http' : 'injected-http', sample: false,
       ownershipVerified: false, machineRouting: 'configured-app-origin' },
@@ -177,7 +221,8 @@ export async function collectGatewayWorkerGraphs(config, { fetchImpl = globalThi
       if (!observation.collections[key].available && !errors[key]) errors[key] = 'INVALID_INVENTORY';
     }
     const serialized = JSON.stringify(observation);
-    if (tokenForms.some(token => serialized.includes(token))) {
+    const normalizedPercentHex = percentHex(serialized);
+    if (tokenForms.some(token => serialized.includes(token) || normalizedPercentHex.includes(token))) {
       Object.assign(observation, empty());
       observation.status = { available: false, state: 'unknown', code: 'KNOWN_SECRET_REFUSED' };
     } else if (Object.keys(errors).length) observation.errors = errors;

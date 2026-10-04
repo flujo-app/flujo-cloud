@@ -2,5 +2,6 @@ node_modules/
 .flujo-cloud/
 *.snapshot
 *.journal.json
+*.snapshot-key-v2/
 .env
 .env.*

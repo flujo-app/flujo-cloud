@@ -44,7 +44,7 @@ Create a dedicated test repository and issue, and use a fine-grained GitHub toke
 
 ## 2. Install the bridge and choose an image
 
-The bridge requires Node.js 22+, Git and an authenticated Fly CLI/account that can create apps, Machines, volumes and secrets. Clone this private repository with an authorized GitHub account:
+The bridge requires Node.js 22+, Git and an authenticated Fly CLI/account that can create apps, Machines, volumes and secrets. Clone the source repository:
 
 ```text
 git clone https://github.com/flujo-app/flujo-cloud.git
@@ -200,7 +200,9 @@ For the parallel example, run `down` separately with each `worker-1.journal.json
 
 ## Transfer and ownership
 
-The bridge verifies the source ZIP's SHA-256, encrypts it using AES-256-GCM with a fresh random 32-byte key, and writes only the encrypted envelope to its temporary directory. The envelope is `{format:"flujo-workspace-encrypted",version:1,iv,tag,data}`, with base64 fields. The key and remote control token go to `fly secrets import` over stdin. The worker authenticates/decrypts the envelope before checking the plaintext hash.
+For older sources without encrypted-transfer metadata, the bridge verifies the source ZIP's SHA-256, encrypts it using AES-256-GCM with a fresh random 32-byte key, and writes only the encrypted envelope to its temporary directory. The envelope is `{format:"flujo-workspace-encrypted",version:1,iv,tag,data}`, with base64 fields. The key and remote control token go to `fly secrets import` over stdin. The worker authenticates/decrypts the envelope before checking the plaintext hash.
+
+An advertised recipient-encrypted v2 source instead requires independent official immutable-image resolution, exact read-version/default-limit labels and all-six-bounds comparison before capture. An explicit digest is not checked capability authority. V2 sends a freshly retained recipient key to begin, authenticates the returned envelope with the fixed v2 AAD and preserves exact encrypted wire bytes/SHA. The existing journal parent must already be private and plain before any journal/lock write. Keep `<journal>.snapshot-key-v2/recipient-key.json` in private storage outside Git and portable packets; it survives success/unknown and is never automatically adopted, overwritten or deleted. Matching bounded v2 terminal ACKs are mandatory even for direct/operator bootstrap. See the [v2 contract](deployment.md#recipient-encrypted-v2-transfer) before using the path; source support alone does not qualify a target image, physical cleanup or replay.
 
 The Machine initially runs `sleep infinity`. The bridge uploads via `fly ssh sftp put`, uses `fly machine exec` to give the fixed volume paths to the image's `node` user, then starts `/app/scripts/launch-next.mjs`. Both Machine configurations have `services: []`; the bridge allocates no public IP or Fly service. Fly proxy binds only `127.0.0.1` locally and reaches the specific Machine's private IPv6 address. The worker listens on IPv6 and requires its control bearer on worker endpoints.
 

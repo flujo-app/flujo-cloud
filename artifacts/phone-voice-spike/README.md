@@ -165,3 +165,25 @@ This is an unexecuted plan, not permission to replay consumed operations.
 
 Full O/FACTORY/FLUJO authority, real World graphs, hot workspace/MCP cloning,
 both subscription providers and autonomous recovery remain active broader work.
+
+## Separate Windows fixture successor, October 4
+
+Frozen PR8 head `66840e42` remains unchanged and held. Its hosted workflow
+37200990758 passed Ubuntu (235 passes, one skip) but failed eight of 236
+Windows checks before voice POST/terminal creation; smoke/exports were skipped.
+The short temp-path alias explanation remains a hypothesis pending a successful
+hosted successor run.
+
+This successor changes fixture setup and cleanup only. It resolves the temp
+parent before creating an owned directory, checks canonical containment before
+recursive removal, and simulates an unresolved journal-root alias to verify
+refusal before transport. The production module and its path guard are unchanged.
+The first focused author run passed14/14 on Node24.19.0; independent static
+review found no blocking issue and did not execute tests. Those fixture checks
+do not establish native Windows alias behavior, physical durability or deployment.
+
+Root separately merged actual synthetic-English transcription and gateway
+restart evidence in https://github.com/flujo-app/iambrokeplshlp/pull/48.
+That Linux/Fly observation is independent of this source-only correction.
+Real microphone, Spanish, response playback and unified World interaction remain
+unqualified. See SOURCE-CHECKS.json for the retained CI failure and first result.

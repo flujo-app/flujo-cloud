@@ -15,12 +15,44 @@ const input = (id = ID) => ({ requestId: id, contentType: 'audio/wav', audio: cl
 const result = (id = ID) => ({ format: 'o-private-stt', version: 1, requestId: id, transcript: 'Review this draft.', languageDetected: 'en', durationSeconds: 2, model: { ...VOICE_MODEL }, replayAllowed: false });
 const response = (value = result(), status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 async function fixture(t, fetchImpl, extra = {}) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'o-voice-fake-'));
-  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  // Hosted Windows can report a short-name temp alias. Production requires a
+  // canonical private root, so establish that precondition in the fixture.
+  const tempParent = await fs.realpath(os.tmpdir());
+  const prefix = 'o-voice-fake-';
+  const root = await fs.mkdtemp(path.join(tempParent, prefix));
+  t.after(async () => {
+    const resolved = path.resolve(root), actual = await fs.realpath(root);
+    assert.equal(path.dirname(resolved), tempParent);
+    assert.equal(path.dirname(actual), tempParent);
+    assert.ok(path.basename(resolved).startsWith(prefix) && path.basename(resolved).length > prefix.length);
+    assert.equal(actual, resolved);
+    await fs.rm(resolved, { recursive: true, force: true });
+  });
   const config = { sttOrigin: 'https://stt.example.invalid', sttToken: TOKEN, journalDir: path.join(root, 'journal'), fetchImpl, ...extra };
   return { config, client: await createVoiceTranscriber(config) };
 }
 const isError = (code, state) => error => error.code === code && (!state || error.state === state);
+
+test('canonical fixture root is admitted; unresolved private-root alias remains held before transport', async t => {
+  let calls = 0;
+  const f = await fixture(t, async () => { calls++; return response(); });
+  assert.equal(await fs.realpath(f.config.journalDir), f.config.journalDir);
+  assert.equal(f.client.status().held, false);
+  const alias = path.join(path.dirname(f.config.journalDir), 'journal-alias');
+  const realpath = fs.realpath;
+  // Simulate only this path's identity mismatch; do not create a Windows alias,
+  // symlink, network endpoint, or another filesystem root.
+  fs.realpath = async (filename, ...rest) => path.resolve(filename) === alias
+    ? f.config.journalDir : realpath(filename, ...rest);
+  try {
+    const held = await createVoiceTranscriber({ ...f.config, journalDir: alias });
+    assert.equal(held.status().held, true);
+    await assert.rejects(held.transcribe(input()), isError('VOICE_UNKNOWN_REQUIRES_RECONCILIATION', 'UNKNOWN'));
+    assert.deepEqual(await fs.readdir(alias), []);
+    assert.equal(calls, 0);
+  } finally { fs.realpath = realpath; }
+  assert.equal((await createVoiceTranscriber(f.config)).status().held, false);
+});
 
 test('intent is durable before sole authenticated POST; input copied; journal contains no raw audio or token', async t => {
   let calls = 0, config; const original = input(); const originalHash = createHash('sha256').update(original.audio).digest('hex');

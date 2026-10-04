@@ -1,0 +1,46 @@
+{
+  "format": "o-phone-voice-source-checks",
+  "version": 1,
+  "scope": "SOURCE_AND_FAKE_CHECKS_ONLY",
+  "browser": {
+    "runtime": "Node24.19.0",
+    "firstAttempt": { "groups": 24, "passed": 23, "failed": 1, "exitCode": 1, "cause": "Fake-fetch counter did not observe its injected override" },
+    "correctedAttempt": { "groups": 24, "passed": 24, "failed": 0, "exitCode": 0 },
+    "sourceFixes": ["Stale microphone rejection cannot cancel a newer capture", "Disposal during state notification cannot enter a transcription POST"]
+  },
+  "gateway": {
+    "runtime": "Node24.19.0 on Windows",
+    "initialAttempt": { "groups": 12, "passed": 12, "failed": 0, "exitCode": 0 },
+    "independentFinding": "Terminal bytes can exist after unacknowledged close/directory sync; startup must reconcile known saved-terminal persistence before admission",
+    "firstSuccessorAttempt": { "groups": 13, "passed": 11, "failed": 2, "exitCode": 1, "cause": "Windows refuses fsync through a read-only descriptor with EPERM" },
+    "boundedDiagnostic": "Own fictional temp file showed stable identities and Windows read-only fsync EPERM; no service/model/media operation",
+    "correctedAttempt": { "groups": 13, "passed": 13, "failed": 0, "exitCode": 0 },
+    "correction": "Validate retained descriptor and named-file identities; sync/close known terminal and sync directory before startup admission. Writable sync descriptor does not rewrite bytes. ENTERED/UNKNOWN remains held."
+  },
+  "sttProtocol": {
+    "runtime": "Python3.12.14 standard-library unittest; deployment Python3.12.11 is separately pinned and unexecuted",
+    "earlierAttempts": [{ "groups": 20, "passed": 20, "exitCode": 0 }, { "groups": 21, "passed": 21, "exitCode": 0 }],
+    "correctedAttempt": { "groups": 30, "passed": 30, "failed": 0, "exitCode": 0, "retainedGroups": 21, "newFakeDiskGroups": 9 },
+    "correction": "Known-completed census must validate retained descriptors/identities, sync/close files and directory, acknowledge Volume.commit and retain unchanged census before cached result or new admission"
+  },
+  "independentReview": {
+    "method": "Static source review, no test/import reruns",
+    "initialGatewayVerdict": "HOLD for the terminal-persistence finding",
+    "correctedPackVerdict": "No blocking source finding after persistence correction and removal of internal chat identity",
+    "integrationCondition": "Entered uncertainty must remain409/503 UNKNOWN, never a browser-recognized definite4xx refusal"
+  },
+  "accounting": "Groups and repeated attempts overlap; these are not aggregate distinct security conditions or model checks.",
+  "actualMicrophoneCalls": 0,
+  "actualDecoderCalls": 0,
+  "actualModelCalls": 0,
+  "actualHttpProviderCalls": 0,
+  "actualModalVolumeCalls": 0,
+  "resourcesProvisioned": 0,
+  "deployed": false,
+  "limits": [
+    "Gateway fixtures use own temporary filesystem files and injected transports; Windows directory fsync is deliberately not qualified.",
+    "STT fixtures use fake decoder/model/RAM journal/syscall/Volume behavior, not physical FileJournal or Modal persistence.",
+    "Real mobile codecs, PyAV/native allocation, model/image loading, accuracy, cold-start latency, authorization deployment, audible playback and restart acceptance remain unverified.",
+    "Full native O authority, hot workspace/MCP cloning, subscription provider qualification, live World graphs and autonomous recovery remain unfinished."
+  ]
+}

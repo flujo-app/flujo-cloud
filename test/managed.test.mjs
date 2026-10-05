@@ -779,6 +779,152 @@ async function cloneFixture(t, { encrypted = false, network } = {}) {
     currentBytes };
 }
 
+const ownedNetwork = 'seagulled-g-0123456789abcdef';
+const ownedInput = f => ({ app: f.worker, appId: f.record.appId, org: f.record.org,
+  network: f.record.network, machineId: f.record.machineId, workspace: f.record.workspace });
+
+test('owned proxy rechecks actual app and Machine before helper effects', async t => {
+  const f = await cloneFixture(t, { network: ownedNetwork });
+  const input = ownedInput(f);
+  const originalApp = { ...f.apps.get(f.worker) };
+  const originalMachine = structuredClone(f.machines.get(f.worker));
+  const originalSecrets = structuredClone(f.secrets.get(f.worker));
+  const originalMachines = f.bridge.machines;
+  const cases = [
+    () => { f.apps.get(f.worker).network = 'other-private-network'; },
+    () => { f.apps.get(f.worker).ID = 'recreated-app'; },
+    () => { f.secrets.set(f.worker, []); },
+    () => { f.machines.get(f.worker).config.services = [{ protocol: 'tcp', internal_port: 4200 }]; },
+    () => { f.machines.get(f.worker).config.env.FLUJO_EXPOSURE_MODE = 'public'; },
+    () => { f.machines.get(f.worker).image_ref.digest = `sha256:${'b'.repeat(64)}`; },
+    () => { f.machines.get(f.worker).state = 'stopped'; },
+    () => { f.bridge.machines = async () => [f.machines.get(f.worker), { id: 'extra', name: 'extra' }]; },
+  ];
+  for (const mutate of cases) {
+    f.apps.set(f.worker, structuredClone(originalApp));
+    f.machines.set(f.worker, structuredClone(originalMachine));
+    f.secrets.set(f.worker, structuredClone(originalSecrets));
+    f.bridge.machines = originalMachines;
+    mutate();
+    const before = f.state.proxies.length;
+    await assert.rejects(f.managed.openOwnedProxy(input));
+    assert.equal(f.state.proxies.length, before);
+    assert.equal((await f.managed.proxyRecords(f.files)).length, 0);
+  }
+  f.apps.set(f.worker, structuredClone(originalApp));
+  f.machines.set(f.worker, structuredClone(originalMachine));
+  f.secrets.set(f.worker, structuredClone(originalSecrets));
+  f.bridge.machines = originalMachines;
+  for (const key of ['appId', 'org', 'network', 'machineId', 'workspace']) {
+    await assert.rejects(f.managed.openOwnedProxy({ ...input, [key]: `${input[key]}-drift` }));
+  }
+  await fs.writeFile(`${f.files.journal}.lock`, 'operator-active', { flag: 'wx', mode: 0o600 });
+  await assert.rejects(f.managed.openOwnedProxy(input), /journal is locked/);
+  await fs.unlink(`${f.files.journal}.lock`);
+  assert.equal(f.state.proxies.length, 0);
+});
+
+test('owned task and cancellation proxies coexist, stop exactly once and release only after child close', async t => {
+  const f = await cloneFixture(t, { network: ownedNetwork });
+  const input = ownedInput(f);
+  const originalProxy = f.bridge.fly.proxy;
+  f.bridge.fly.proxy = async options => {
+    const records = await f.managed.proxyRecords(f.files);
+    assert.ok(records.some(({ record }) => record.state === 'opening'));
+    return originalProxy(options);
+  };
+  await fs.unlink(f.files.credentials); // The SDK proxy path never reads a worker bearer.
+  const first = await f.managed.openOwnedProxy(input);
+  const second = await f.managed.openOwnedProxy(input);
+  input.app = 'mutated-caller-object';
+  assert.deepEqual(Object.keys(first).sort(), ['check', 'origin', 'stop']);
+  assert.equal(f.state.proxies.length, 2);
+  assert.equal((await f.managed.proxyRecords(f.files)).length, 2);
+  first.check(); second.check();
+  await assert.rejects(f.managed.down(f.worker), /proxy/);
+  assert.deepEqual(await Promise.all([second.stop(), second.stop()]), [{ childClosed: true }, { childClosed: true }]);
+  assert.equal(f.state.proxies[1].stopCalls, 1);
+  assert.equal((await f.managed.proxyRecords(f.files)).length, 1);
+  assert.deepEqual(await first.stop(), { childClosed: true });
+  assert.equal((await f.managed.proxyRecords(f.files)).length, 0);
+});
+
+test('concurrent owned proxy stops serialize their short cleanup transitions after both children close', async t => {
+  const f = await cloneFixture(t, { network: ownedNetwork });
+  const task = await f.managed.openOwnedProxy(ownedInput(f));
+  const cancel = await f.managed.openOwnedProxy(ownedInput(f));
+  const originalFence = f.managed.assertProxyFence.bind(f.managed);
+  let enterFirst;
+  let releaseFirst;
+  const firstEntered = new Promise(resolve => { enterFirst = resolve; });
+  const firstGate = new Promise(resolve => { releaseFirst = resolve; });
+  let held = false;
+  f.managed.assertProxyFence = async (files, action) => {
+    if (action === 'proxy-stop' && !held) {
+      held = true;
+      enterFirst();
+      await firstGate;
+    }
+    return originalFence(files, action);
+  };
+  const taskStop = task.stop();
+  await firstEntered;
+  const cancelStop = cancel.stop();
+  try {
+    const early = await Promise.race([
+      cancelStop.then(() => 'closed', () => 'failed'),
+      new Promise(resolve => setTimeout(() => resolve('waiting'), 100)),
+    ]);
+    assert.equal(early, 'waiting');
+  } finally { releaseFirst(); }
+  assert.deepEqual(await Promise.all([taskStop, cancelStop]), [{ childClosed: true }, { childClosed: true }]);
+  assert.deepEqual(f.state.proxies.map(proxy => proxy.stopCalls), [1, 1]);
+  assert.equal((await f.managed.proxyRecords(f.files)).length, 0);
+});
+
+test('owned proxy uncertain close, partial open and restart records retain original cleanup hold', async t => {
+  const f = await cloneFixture(t, { network: ownedNetwork });
+  const input = ownedInput(f);
+  const originalProxy = f.bridge.fly.proxy;
+  f.bridge.fly.proxy = async () => { throw new Error('Synthetic helper partly opened then lost acknowledgement.'); };
+  await assert.rejects(f.managed.openOwnedProxy(input), /partly opened/);
+  assert.equal((await f.managed.proxyRecords(f.files))[0].record.state, 'opening');
+  await assert.rejects(f.managed.openOwnedProxy(input), /cleanup hold/);
+  await assert.rejects(f.managed.down(f.worker), /cleanup hold/);
+
+  // A separate worker identity gives close-unknown and restart tests their own records.
+  const g = await cloneFixture(t, { network: ownedNetwork });
+  const handle = await g.managed.openOwnedProxy(ownedInput(g));
+  g.state.sourceStopUnknown = true;
+  await assert.rejects(handle.stop(), { code: 'PROXY_CLEANUP_UNKNOWN' });
+  await assert.rejects(handle.stop(), { code: 'PROXY_CLEANUP_UNKNOWN' });
+  assert.equal(g.state.proxies[0].stopCalls, 1);
+  assert.equal((await g.managed.proxyRecords(g.files))[0].record.state, 'close-unknown');
+  await assert.rejects(g.managed.openOwnedProxy(ownedInput(g)), /cleanup hold/);
+
+  const noReceipt = await cloneFixture(t, { network: ownedNetwork });
+  const noReceiptHandle = await noReceipt.managed.openOwnedProxy(ownedInput(noReceipt));
+  noReceipt.state.sourceStopNoReceipt = true;
+  await assert.rejects(noReceiptHandle.stop(), { code: 'PROXY_CLEANUP_UNKNOWN' });
+  assert.equal((await noReceipt.managed.proxyRecords(noReceipt.files))[0].record.state, 'close-unknown');
+
+  const h = await cloneFixture(t, { network: ownedNetwork });
+  const revived = await h.managed.openOwnedProxy(ownedInput(h));
+  const [{ filename, record }] = await h.managed.proxyRecords(h.files);
+  await writePrivateJson(filename, { ...record, generation: randomUUID() });
+  await assert.rejects(h.managed.openOwnedProxy(ownedInput(h)), /cleanup hold/);
+  await assert.rejects(revived.stop(), { code: 'PROXY_CLEANUP_UNKNOWN' });
+
+  const foreign = await cloneFixture(t, { network: ownedNetwork });
+  const foreignHandle = await foreign.managed.openOwnedProxy(ownedInput(foreign));
+  await fs.writeFile(foreign.files.operationLock, 'unrelated-operation', { flag: 'wx', mode: 0o600 });
+  await assert.rejects(foreignHandle.stop(), { code: 'PROXY_CLEANUP_UNKNOWN' });
+  assert.equal(await fs.readFile(foreign.files.operationLock, 'utf8'), 'unrelated-operation');
+  assert.equal((await foreign.managed.proxyRecords(foreign.files)).length, 1);
+  assert.equal(foreign.state.proxies[0].stopCalls, 1);
+  f.bridge.fly.proxy = originalProxy;
+});
+
 test('managed hot clone bypasses empty local discovery, captures current whole workspace and preserves source bytes with fresh target identity', async t => {
   const f = await cloneFixture(t);
   await assert.rejects(f.managed.up({ workspace: 'test-cloud', profile: 'private-workspace' }), /No registered/);

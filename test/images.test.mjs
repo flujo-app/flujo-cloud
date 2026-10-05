@@ -8,6 +8,10 @@ const REGISTRY = 'https://ghcr.io/v2/mario-andreschak/flujo';
 const TOKEN = 'synthetic_anonymous_registry_token_0123456789';
 const REVISION = 'a'.repeat(40);
 const SOURCE = { applicationVersion: '3.45.0', snapshotFormatVersion: 2, layoutVersion: 2, workerProtocolVersion: 1 };
+const TARGET_LIMITS = { maxFileBytes: 268435456, maxUncompressedBytes: 1073741824, maxManifestBytes: 8388608,
+  maxArchiveBytes: 1082130432, maxEncryptedBytes: 1442844672, maxMembers: 65534 };
+const V2_LABELS = { 'io.flujo.worker.snapshot-envelope-read-versions': '1,2',
+  'io.flujo.worker.snapshot-default-limits': JSON.stringify(TARGET_LIMITS) };
 const TYPE = { index: 'application/vnd.oci.image.index.v1+json', manifest: 'application/vnd.oci.image.manifest.v1+json', config: 'application/vnd.oci.image.config.v1+json' };
 function packed(value) {
   const bytes = Buffer.from(JSON.stringify(value));
@@ -17,7 +21,7 @@ function descriptor(item, mediaType, extra = {}) { return { digest: item.digest,
 function response(item, headers = {}) { return new Response(item.bytes, { headers: { 'docker-content-digest': item.digest, ...headers } }); }
 
 function fixture({ labels = {}, missingLabels = false, architecture = 'amd64', os = 'linux', index = false,
-  extraPlatforms = [], configExtra = {}, manifestExtra = {}, indexEntries, mediaTypes = TYPE } = {}) {
+  extraPlatforms = [], configExtra = {}, configFields = {}, manifestExtra = {}, indexEntries, mediaTypes = TYPE } = {}) {
   const config = packed({ architecture, os, config: { Labels: {
     'org.opencontainers.image.source': 'https://github.com/mario-andreschak/FLUJO',
     'org.opencontainers.image.revision': REVISION,
@@ -26,7 +30,7 @@ function fixture({ labels = {}, missingLabels = false, architecture = 'amd64', o
       'io.flujo.application.version': SOURCE.applicationVersion,
       'io.flujo.snapshot.format': '2', 'io.flujo.workspace.layout': '2', 'io.flujo.worker.protocol': '1',
     } : {}), ...labels,
-  } }, ...configExtra });
+  }, ...configFields }, ...configExtra });
   const manifest = packed({ schemaVersion: 2, mediaType: mediaTypes.manifest,
     config: descriptor(config, mediaTypes.config), layers: [], ...manifestExtra });
   const root = index ? packed({ schemaVersion: 2, mediaType: mediaTypes.index, manifests: indexEntries || [
@@ -351,4 +355,131 @@ test('retains explicit immutable custom images without pretending to verify thei
   for (const invalid of ['registry.fly.io/custom:latest', `${IMAGE}@sha256:${'A'.repeat(64)}`, `${image}\nsecret`]) {
     await assert.rejects(resolveWorkerImage({ image: invalid }), { code: 'IMAGE_OVERRIDE_INVALID' });
   }
+});
+
+test('private-workspace checks exact source revision and snapshot-source label on verified OCI config', async () => {
+  const f = fixture({ index: true, labels: { 'io.flujo.worker.snapshot-source': '1' } });
+  const source = { ...SOURCE, revision: REVISION, workerSnapshotSourceVersion: 1 };
+  // Missing revision/version tags may fall through, but the selected config
+  // must STILL match the exact source revision, not merely application version.
+  const selected = await f.resolve({ source, profile: 'private-workspace' });
+  assert.equal(selected.image, `${IMAGE}@${f.manifest.digest}`);
+  assert.equal(selected.revision, REVISION);
+  assert.equal(selected.workerSnapshotSourceVersion, 1);
+  assert.equal(selected.compatibility, 'verified');
+});
+
+test('private-workspace refuses absent/wrong image capability and exact-revision mismatch', async () => {
+  const source = { ...SOURCE, revision: REVISION, workerSnapshotSourceVersion: 1 };
+  for (const marker of [undefined, '0', '2', 1]) {
+    const f = fixture({ labels: marker === undefined ? {} : { 'io.flujo.worker.snapshot-source': marker } });
+    await assert.rejects(f.resolve({ source, profile: 'private-workspace' }), { code: 'IMAGE_PROFILE_CAPABILITY' });
+  }
+  for (const channel of [undefined, 'cloud-worker']) {
+    const f = fixture({ labels: { 'io.flujo.worker.snapshot-source': '1', 'org.opencontainers.image.revision': 'b'.repeat(40) } });
+    await assert.rejects(f.resolve({ source, profile: 'private-workspace', channel }), { code: 'IMAGE_IDENTITY' });
+  }
+});
+
+test('private-workspace refuses unknown source capability/revision and unchecked custom images before registry access', async () => {
+  let requests = 0;
+  const fetchImpl = async () => { requests += 1; throw new Error('must not fetch'); };
+  for (const source of [SOURCE, { ...SOURCE, revision: REVISION, workerSnapshotSourceVersion: '1' },
+    { ...SOURCE, revision: REVISION, workerSnapshotSourceVersion: 2 }, { ...SOURCE, revision: null, workerSnapshotSourceVersion: 1 }]) {
+    await assert.rejects(resolveWorkerImage({ source, profile: 'private-workspace', fetchImpl }));
+  }
+  await assert.rejects(resolveWorkerImage({ source: { ...SOURCE, revision: REVISION, workerSnapshotSourceVersion: 1 },
+    profile: 'private-workspace', image: `${IMAGE}@sha256:${'e'.repeat(64)}`, fetchImpl }), { code: 'IMAGE_PROFILE_UNCHECKED' });
+  assert.equal(requests, 0);
+});
+
+test('legacy images keep their original resolver result even with a source capability marker', async () => {
+  const f = fixture();
+  const selected = await f.resolve({ source: { ...SOURCE, workerSnapshotSourceVersion: 1 } });
+  assert.equal(Object.hasOwn(selected, 'workerSnapshotSourceVersion'), false);
+  assert.equal(selected.compatibility, 'verified');
+});
+
+test('unknown-native source revision still requires verified official OCI target identity, digest and capability', async () => {
+  const f = fixture({ labels: { 'io.flujo.worker.snapshot-source': '1' } });
+  const selected = await f.resolve({ source: { ...SOURCE, workerSnapshotSourceVersion: 1 }, profile: 'private-workspace' });
+  assert.equal(selected.revision, REVISION);
+  assert.equal(selected.image, `${IMAGE}@${f.manifest.digest}`);
+  assert.equal(selected.workerSnapshotSourceVersion, 1);
+  assert.equal(selected.compatibility, 'verified');
+});
+
+const encryptedSource = () => {
+  const maxUncompressedBytes = 1024 * 1024;
+  const maxArchiveBytes = maxUncompressedBytes + 8 * 1024 * 1024;
+  return { ...SOURCE, snapshotEncryption: {
+    format: 'flujo-workspace-encrypted', cipher: 'aes-256-gcm', writeVersion: 2, readVersions: [1, 2],
+    legacyPlaintextRead: true, recipientKeyRequired: true, recipientKeyBytes: 32, recipientKeyEncoding: 'base64',
+    v2Aad: 'flujo:workspace-snapshot:v2', v2Digest: 'sha256-encrypted-wire', v1Digest: 'sha256-plaintext-zip',
+  }, snapshotLimits: { maxFileBytes: 1024, maxUncompressedBytes, maxManifestBytes: 8 * 1024 * 1024,
+    maxArchiveBytes, maxEncryptedBytes: 4 * Math.ceil(maxArchiveBytes / 3) + 4096, maxMembers: 65_534 } };
+};
+
+test('v2 source requires the exact paired OCI read-versions marker, not format2/protocol1 or caller assertion', async () => {
+  for (const marker of [undefined, '2', '1, 2', '1,2,3', [1, 2]]) {
+    const f = fixture({ labels: marker === undefined ? {} : { 'io.flujo.worker.snapshot-envelope-read-versions': marker } });
+    await assert.rejects(f.resolve({ source: encryptedSource() }), { code: 'IMAGE_ENVELOPE_CAPABILITY' });
+  }
+  const f = fixture({ labels: V2_LABELS });
+  const resolved = await f.resolve({ source: encryptedSource() });
+  assert.deepEqual(resolved.snapshotEnvelopeReadVersions, [1, 2]);
+  assert.equal(resolved.compatibility, 'verified');
+  assert.equal(resolved.image, `${IMAGE}@${f.manifest.digest}`);
+  assert.deepEqual(resolved.snapshotTransfer.limits, TARGET_LIMITS);
+  assert.equal(resolved.snapshotTransfer.encryptionVersion, 2);
+});
+
+test('v2 official image must match a reported source revision even through an explicit channel', async () => {
+  const source = { ...encryptedSource(), revision: 'b'.repeat(40) };
+  const f = fixture({ labels: V2_LABELS });
+  await assert.rejects(f.resolve({ source, channel: 'cloud-worker' }), { code: 'IMAGE_IDENTITY' });
+});
+
+test('v2 refuses unchecked image overrides and malformed source encryption before registry entry', async () => {
+  let reads = 0;
+  const fetchImpl = async () => { reads += 1; throw new Error('No network entry expected.'); };
+  await assert.rejects(resolveWorkerImage({ source: encryptedSource(), image: `${IMAGE}@sha256:${'a'.repeat(64)}`, fetchImpl }),
+    { code: 'IMAGE_PROFILE_UNCHECKED' });
+  const source = encryptedSource(); source.snapshotEncryption.recipientKeyRequired = false;
+  await assert.rejects(resolveWorkerImage({ source, fetchImpl }));
+  assert.equal(reads, 0);
+});
+
+test('v2 rejects missing, historical, reordered or altered target defaults despite read-version support', async () => {
+  const historical = { 'io.flujo.worker.snapshot-envelope-read-versions': '1,2',
+    'io.flujo.worker.snapshot.restore.limits': JSON.stringify(TARGET_LIMITS) };
+  const reversed = Object.fromEntries(Object.entries(TARGET_LIMITS).reverse());
+  for (const labels of [historical, { 'io.flujo.worker.snapshot-envelope-read-versions': '1,2' },
+    { ...V2_LABELS, 'io.flujo.worker.snapshot-default-limits': JSON.stringify(TARGET_LIMITS, null, 2) },
+    { ...V2_LABELS, 'io.flujo.worker.snapshot-default-limits': JSON.stringify(reversed) },
+    ...Object.keys(TARGET_LIMITS).map(key => ({ ...V2_LABELS,
+      'io.flujo.worker.snapshot-default-limits': JSON.stringify({ ...TARGET_LIMITS, [key]: TARGET_LIMITS[key] + 1 }) }))]) {
+    await assert.rejects(fixture({ labels }).resolve({ source: encryptedSource() }), { code: 'IMAGE_RESTORE_BOUNDS' });
+  }
+});
+
+test('v2 target OCI Config.Env cannot override either native restore bound or use malformed environment metadata', async () => {
+  for (const configFields of [{ Env: ['FLUJO_SNAPSHOT_MAX_FILE_BYTES=1'] }, { Env: ['FLUJO_SNAPSHOT_MAX_BYTES=1073741824'] },
+    { Env: ['FLUJO_SNAPSHOT_MAX_BYTES'] }, { Env: {} }, { Env: [null] }, { env: [] }]) {
+    await assert.rejects(fixture({ labels: V2_LABELS, configFields }).resolve({ source: encryptedSource() }),
+      { code: 'IMAGE_RESTORE_BOUNDS' });
+  }
+  for (const Env of [undefined, null, [], ['NODE_ENV=production', 'PATH=/synthetic/bin']]) {
+    const resolved = await fixture({ labels: V2_LABELS, configFields: { Env } }).resolve({ source: encryptedSource() });
+    assert.deepEqual(resolved.snapshotTransfer.limits, TARGET_LIMITS);
+  }
+});
+
+test('v2 private-workspace keeps its separate source and immutable-image Cap1 gates', async () => {
+  const source = { ...encryptedSource(), workerSnapshotSourceVersion: 1 };
+  await assert.rejects(fixture({ labels: V2_LABELS }).resolve({ source, profile: 'private-workspace' }),
+    { code: 'IMAGE_PROFILE_CAPABILITY' });
+  const resolved = await fixture({ labels: { ...V2_LABELS, 'io.flujo.worker.snapshot-source': '1' } })
+    .resolve({ source, profile: 'private-workspace' });
+  assert.deepEqual(resolved.snapshotTransfer.limits, TARGET_LIMITS);
 });

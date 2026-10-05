@@ -8,6 +8,10 @@ import { ManagedCloud } from '../lib/managed.mjs';
 import { Journal } from '../lib/journal.mjs';
 import { readPrivateJson, writePrivateJson } from '../lib/private-files.mjs';
 
+test('managed SDK advertises its explicit private-network source contract', () => {
+  assert.equal(ManagedCloud.privateNetworkContractVersion, 1);
+});
+
 const sourceToken = 'synthetic_source_private_01234567890123456789';
 const origin = 'http://127.0.0.1:43451';
 const image = `ghcr.io/mario-andreschak/flujo@sha256:${'a'.repeat(64)}`;
@@ -41,6 +45,7 @@ async function fixture(t) {
       await state.beforeJournal?.(options);
       await new Journal(options.journal).create({ format: 'flujo-cloud-journal', version: 1,
         owner: randomUUID(), app: options.app, org: options.org, region: options.region,
+        ...(options.network ? { network: options.network } : {}),
         workspace: options.workspace, image: options.image, flowIds: options.flowIds,
         state: state.failUp || state.failCapture || state.failCreateApp ? 'failed' : 'ready',
         stage: state.failCapture ? 'snapshot' : state.failCreateApp ? 'create-app' : 'ready',
@@ -114,6 +119,23 @@ test('managed lifecycle discovers, pins, saves private credentials, calls and cl
   await assert.rejects(fs.lstat(files.credentials), { code: 'ENOENT' });
   assert.equal((await managed.list())[0].state, 'destroyed');
   await managed.down(result.worker);
+});
+
+test('managed network stays private and mismatched journal identity blocks recovery', async t => {
+  const { managed, input } = await fixture(t);
+  const network = 'seagulled-g-0123456789abcdef';
+  const result = await managed.up({ ...input, network });
+  const files = managed.paths(result.worker);
+  const metadata = await readPrivateJson(files.metadata);
+  const journal = await new Journal(files.journal).read();
+  assert.equal(metadata.network, network);
+  assert.equal(journal.network, network);
+  assert.equal(JSON.stringify(await managed.list()).includes(network), false);
+  assert.equal(JSON.stringify(result).includes(network), false);
+  await new Journal(files.journal).save({ ...journal, network: 'different-network' });
+  await assert.rejects(managed.call(result.worker, { request: { model: 'default-agent-flujo' } }),
+    /identities do not match/);
+  await assert.rejects(managed.down(result.worker), /identities do not match/);
 });
 
 test('preflight and discovery output are credential-free and create no persistent state', async t => {

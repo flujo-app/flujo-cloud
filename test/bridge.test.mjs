@@ -47,6 +47,7 @@ async function fixture(t) {
   let duplicateFlowNames = false;
   let creationDigest;
   let execResult = { exit_code: 0 };
+  let networkInventoryOverride;
   const value = (args, key) => args[args.indexOf(key) + 1];
   const fly = {
     async run(args, runOptions = {}) {
@@ -88,6 +89,12 @@ async function fixture(t) {
     requests.push({ url, init });
     if (url.origin === 'https://api.machines.dev') {
       assert.equal(init.headers.Authorization, `Bearer ${flyToken}`);
+      if (init.method === 'GET') {
+        assert.equal(url.pathname, '/v1/apps');
+        assert.equal(url.searchParams.get('org_slug'), options.org);
+        return networkInventoryOverride?.() ?? json({ total_apps: app ? 1 : 0,
+          apps: app ? [{ id: app.ID, name: app.Name, network: options.network ?? 'default' }] : [] });
+      }
       const { name, config } = JSON.parse(init.body);
       machines = [{ id: 'ab1234cd5678', name, state: 'started', config,
         image_ref: { digest: creationDigest || config.image.split('@')[1] } }];
@@ -114,7 +121,7 @@ async function fixture(t) {
     if (url.pathname === '/v1/chat/completions') return json({ choices: [{ message: { content: 'synthetic flow finished' } }] });
     throw new Error('Unexpected test HTTP endpoint.');
   };
-  const bridge = new CloudBridge({ fly, fetchImpl, sleepImpl: async () => undefined, port: async () => 43210 });
+  const bridge = new CloudBridge({ fly, fetchImpl, env, sleepImpl: async () => undefined, port: async () => 43210 });
   return {
     bridge, fly, fetchImpl, options, calls, requests, proxyCalls,
     uploaded: () => uploaded, secretInput: () => secretInput, proxyStops: () => proxyStops,
@@ -124,6 +131,7 @@ async function fixture(t) {
     setCreationDigest: (value) => { creationDigest = value; },
     setExecResult: (value) => { execResult = value; },
     setApp: (value) => { app = value; }, setWorkerState: (value) => { workerState = value; },
+    setNetworkInventory: (callback) => { networkInventoryOverride = callback; },
   };
 }
 
@@ -155,6 +163,8 @@ test('mock lifecycle captures, encrypts, provisions privately, calls the same fl
   assert.deepEqual(state.machines()[0].config.services, []);
   assert.ok(state.machines()[0].config.init.cmd.includes('::'));
   assert.ok(!state.calls.some((call) => call.args.includes('--port') || call.args[0] === 'ips'));
+  assert.ok(!state.calls.some((call) => call.args.includes('--network')));
+  assert.ok(!state.requests.some((request) => request.url.pathname === '/v1/apps'));
   assert.ok(!state.calls.some((call) => call.args[0] === 'machine' && call.args[1] === 'run'));
   const creation = state.requests.find((entry) => entry.url.origin === 'https://api.machines.dev');
   assert.equal(JSON.parse(creation.init.body).config.image, state.options.image);
@@ -280,6 +290,86 @@ test('never adopts an existing app', async (t) => {
   state.setApp({ ID: 'someone-elses-id', Name: state.options.app, Organization: { Slug: state.options.org } });
   await assert.rejects(state.bridge.up(state.options, env), /already exists/);
   assert.ok(!state.calls.some((call) => call.args[1] === 'create' || call.args[1] === 'destroy'));
+});
+
+test('custom network is journaled, selected at app creation, and read back before effects and proxy', async t => {
+  const state = await fixture(t);
+  state.options.network = 'seagulled-g-0123456789abcdef';
+  await state.bridge.up(state.options, env);
+  const journal = JSON.parse(await fs.readFile(state.options.journal, 'utf8'));
+  assert.equal(journal.network, state.options.network);
+  const create = state.calls.find(call => call.args[0] === 'apps' && call.args[1] === 'create');
+  assert.deepEqual(create.args.slice(create.args.indexOf('--network'), create.args.indexOf('--network') + 2),
+    ['--network', state.options.network]);
+  assert.ok(state.requests.filter(request => request.url.pathname === '/v1/apps').length >= 2);
+  await state.bridge.call({ journal: state.options.journal, request: { model: 'flow-id' } }, env);
+  assert.ok(state.requests.filter(request => request.url.pathname === '/v1/apps').length >= 4);
+  await state.bridge.down({ journal: state.options.journal });
+  assert.ok(state.requests.filter(request => request.url.pathname === '/v1/apps').length >= 6);
+});
+
+test('network readback failures hold the new app before secrets, volume, or Machine mutation', async t => {
+  for (const response of [
+    () => json({ total_apps: 1, apps: [{ id: 'app-immutable-id', name: 'synthetic-flujo-worker', network: 'default' }] }),
+    () => json({ total_apps: 2, apps: [{ id: 'app-immutable-id', name: 'synthetic-flujo-worker', network: 'goal-net' }] }),
+    () => json({ total_apps: 1, apps: [{ id: 'app-immutable-id', name: 'synthetic-flujo-worker' }] }),
+  ]) {
+    const state = await fixture(t);
+    state.options.network = 'goal-net';
+    state.setNetworkInventory(response);
+    await assert.rejects(state.bridge.up(state.options, env), /network|inventory/);
+    const journal = JSON.parse(await fs.readFile(state.options.journal, 'utf8'));
+    assert.equal(journal.state, 'failed');
+    assert.equal(journal.network, 'goal-net');
+    assert.equal(journal.appCreated, true);
+    assert.ok(!state.calls.some(call => ['secrets', 'volumes', 'machine'].includes(call.args[0])));
+  }
+});
+
+test('fresh network readback fences later volume and Machine mutations', async t => {
+  for (const failAt of [2, 3]) {
+    const state = await fixture(t);
+    state.options.network = 'goal-net';
+    let reads = 0;
+    state.setNetworkInventory(() => {
+      reads += 1;
+      return json({ total_apps: 1, apps: [{ id: 'app-immutable-id', name: state.options.app,
+        network: reads === failAt ? 'default' : 'goal-net' }] });
+    });
+    await assert.rejects(state.bridge.up(state.options, env), /private network/);
+    assert.equal(reads, failAt);
+    assert.ok(state.calls.some(call => call.args[0] === 'secrets' && call.args[1] === 'import'));
+    assert.equal(state.calls.some(call => call.args[0] === 'volumes' && call.args[1] === 'create'), failAt === 3);
+    assert.ok(!state.requests.some(request => request.url.pathname.endsWith('/machines')));
+  }
+});
+
+test('network change blocks proxy and retirement while another same-goal member is permitted', async t => {
+  const state = await fixture(t);
+  state.options.network = 'goal-net';
+  state.setNetworkInventory(() => json({ total_apps: 2, apps: [
+    { id: 'app-immutable-id', name: state.options.app, network: 'goal-net' },
+    { id: 'sibling-app-id', name: 'sibling-worker', network: 'goal-net' },
+  ] }));
+  await state.bridge.up(state.options, env);
+  const proxies = state.proxyCalls.length;
+  state.setNetworkInventory(() => json({ total_apps: 2, apps: [
+    { id: 'app-immutable-id', name: state.options.app, network: 'default' },
+    { id: 'sibling-app-id', name: 'sibling-worker', network: 'goal-net' },
+  ] }));
+  await assert.rejects(state.bridge.call({ journal: state.options.journal,
+    request: { model: 'flow-id' } }, env), /private network/);
+  assert.equal(state.proxyCalls.length, proxies);
+  await assert.rejects(state.bridge.down({ journal: state.options.journal }), /private network/);
+  assert.ok(!state.calls.some(call => call.args[1] === 'destroy'));
+});
+
+test('custom network option is validated before any SDK effect', () => {
+  const options = { app: 'test-app', org: 'personal', region: 'iad', workspace: 'test',
+    image: `ghcr.io/example/flujo@sha256:${'a'.repeat(64)}`, journal: 'synthetic-journal' };
+  for (const network of ['', 'default', '0invalid', 'bad_network', null]) {
+    assert.throws(() => validateOptions({ ...options, network }), /Network/);
+  }
 });
 
 test('readiness failure keeps ownership journal for cleanup and closes its proxy', async (t) => {

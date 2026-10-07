@@ -52,6 +52,6 @@ The bridge's [CI run 34000557715](https://github.com/flujo-app/flujo-cloud/actio
 
 ## Using this version
 
-Use the [managed deployment guide](deployment.md). The source currently needs an updated FLUJO `main` checkout launched normally; the published `flujo-ai` npm release does not yet contain native discovery. The bridge is installed from the private `flujo-app/flujo-cloud` Git repository and has no npm runtime dependencies. It is not a public npm package.
+At the time of this validation, the source used an updated FLUJO `main` checkout launched normally; the then-published `flujo-ai` npm release did not contain native discovery. That support first shipped in the npm launcher with FLUJO 3.45.1. Use the [managed deployment guide](deployment.md) for current source setup and the Windows initialization fix included in 3.45.2. The bridge is installed from the private `flujo-app/flujo-cloud` Git repository and has no npm runtime dependencies. It is not a public npm package.
 
 This is the CLI path. The shared `ManagedCloud` service is available for a future MCP adapter, but this repository does not expose an MCP server yet. Supported file-backed Codex credentials were exercised here; arbitrary OS keyrings, perpetual refresh coordination, automatic scaling and result merge-back are not implemented.

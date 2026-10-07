@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createCipheriv } from 'node:crypto';
 import { encryptSnapshot, sha256 } from '../lib/envelope.mjs';
 import { encryptSnapshotFile, encryptSnapshotResponse, verifyEncryptedSnapshotFile, spoolSnapshot } from '../lib/snapshot-file.mjs';
 
@@ -12,6 +12,26 @@ async function fixture(t) {
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   return { directory, file: path.join(directory, 'archive'), key: randomBytes(32), plaintext: randomBytes(190001) };
 }
+
+test('bounded v2 verification requires negotiated version, AAD and matching wire digest', async t => {
+  const f = await fixture(t);
+  const iv = randomBytes(12);
+  const make = aad => {
+    const cipher = createCipheriv('aes-256-gcm', f.key, iv);
+    cipher.setAAD(Buffer.from(aad));
+    return Buffer.from(JSON.stringify({ format: 'flujo-workspace-encrypted', version: 2,
+      iv: iv.toString('base64'), data: Buffer.concat([cipher.update(f.plaintext), cipher.final()]).toString('base64'),
+      tag: cipher.getAuthTag().toString('base64') }));
+  };
+  const wire = make('flujo:workspace-snapshot:v2');
+  await fs.writeFile(f.file, wire);
+  const verified = await verifyEncryptedSnapshotFile(f.file, f.key, undefined, f.plaintext.length, sha256(wire), { version: 2 });
+  assert.equal(verified.plaintextSha256, sha256(f.plaintext));
+  await assert.rejects(verifyEncryptedSnapshotFile(f.file, f.key, sha256(f.plaintext), f.plaintext.length, sha256(wire)), /framing/);
+  await assert.rejects(verifyEncryptedSnapshotFile(f.file, f.key, undefined, f.plaintext.length, '0'.repeat(64), { version: 2 }), /wire digest/);
+  await fs.writeFile(f.file, make('incorrect-aad'));
+  await assert.rejects(verifyEncryptedSnapshotFile(f.file, f.key, undefined, f.plaintext.length, undefined, { version: 2 }));
+});
 
 test('bounded legacy encryption and both v1 tag orders authenticate the exact archive', async t => {
   const f = await fixture(t);

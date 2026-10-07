@@ -1,0 +1,100 @@
+{
+  "format": "o-phone-stt-source-pins",
+  "version": 1,
+  "scope": "SOURCE_AND_FAKE_PROTOCOL_ONLY_NOT_DEPLOYED",
+  "python": "3.12.11",
+  "modalDeployClient": "1.5.5",
+  "originallyResearchedModalReference": "1.2.4",
+  "modalCompatibilityScope": "The used API signatures and Python micro-version selector were checked against the exact SHA256-verified publisher Modal1.5.5 wheel in memory, without SDK imports, installation, execution or API calls. This supports source compatibility for Root's installed deployment client, not actual deployment or server behavior. The original v1.2.4 research remains retained; no downgrade is needed.",
+  "modalSdkPublisherArtifact": {
+    "filename": "modal-1.5.5-py3-none-any.whl",
+    "sha256": "8d10d3ee09818aaba1973b73ce2521ab8961b63a29b5b52e3ff0d25e7a74808e",
+    "primaryUrl": "https://files.pythonhosted.org/packages/04/19/b3dca8baec119126058b12ca620e44022e4d08a091956668bd04180c89a7/modal-1.5.5-py3-none-any.whl",
+    "checkedApis": ["Image.debian_slim python3.12.11", "Image.add_local_file copy=True", "Volume.from_name create_if_missing=False", "Secret.from_name required_keys", "App.function cpu/memory/timeout/min_containers/max_containers/scaledown_window", "concurrent max_inputs", "asgi_app"],
+    "githubTagEvidence": "v1.5.5 tag URLs were not retrievable; the verified publisher distribution is the evidence"
+  },
+  "packages": {
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.6.0",
+    "av": "16.0.1",
+    "numpy": "2.2.6",
+    "huggingface-hub": "0.36.0",
+    "fastapi": "0.115.12"
+  },
+  "transitiveDependenciesFullyLocked": false,
+  "imageDigestQualified": false,
+  "model": {
+    "repository": "Systran/faster-whisper-base",
+    "revision": "a80717a3a48b1b28aa687bca146cb7301feae1b1",
+    "computeType": "int8",
+    "device": "cpu",
+    "languageDetection": "automatic",
+    "task": "transcribe",
+    "vadEnabled": false
+  },
+  "weights": "Downloaded only at runtime into a separately provisioned private Modal cache Volume; never Git, public artifact or build image.",
+  "request": {
+    "method": "POST",
+    "path": "/transcribe",
+    "auth": "Authorization: Bearer <private secret, 32..256 ASCII characters without whitespace>",
+    "requestIdHeader": "X-O-Voice-Request-Id",
+    "requestId": "canonical lowercase UUIDv4",
+    "contentTypes": ["audio/webm", "audio/ogg", "audio/mp4", "audio/wav"],
+    "maxEncodedBytes": 1048576,
+    "maxDecodedSeconds": 30,
+    "decodedSampleRate": 16000,
+    "maxDecodedMonoSamples": 480000,
+    "maxTranscriptUtf16CodeUnits": 4096
+  },
+  "errors": {
+    "envelope": ["format", "version", "requestId", "code", "state", "replayAllowed"],
+    "format": "o-private-stt-error",
+    "version": 1,
+    "requestId": "canonical UUIDv4 or null",
+    "replayAllowed": false,
+    "preEntryRefusals": {
+      "400": ["INVALID_REQUEST_ID", "EMPTY_AUDIO", "INVALID_CONTENT_LENGTH", "CONTENT_LENGTH_MISMATCH"],
+      "401": ["AUTH_REQUIRED"],
+      "413": ["AUDIO_TOO_LARGE"],
+      "415": ["UNSUPPORTED_MEDIA_TYPE", "UNSUPPORTED_CONTENT_ENCODING"]
+    },
+    "unknown": {
+      "409": ["REQUEST_ID_CONFLICT", "REQUEST_UNKNOWN", "PRIOR_REQUEST_UNKNOWN"],
+      "503": ["AUTH_NOT_CONFIGURED", "STORAGE_HELD", "JOURNAL_FULL", "REQUEST_BUSY", "TRANSCRIPTION_UNKNOWN", "REQUEST_UNKNOWN"]
+    }
+  },
+  "durability": "Private request ENTERED is file-fsynced and Volume.commit acknowledged before decoder or model. Before any cached result or fresh intent, claim fully validates the bounded saved census, retains read descriptors and checks descriptor/named-file identity, file-fsyncs and closes known COMPLETED rows, verifies closed census, directory-fsyncs/closes and requires acknowledged Volume.commit with unchanged identity/census. This reconciles persistence of an already known completion without rewriting terminal records, converting intent, inferring completion or invoking ASR. Matching completed ID then returns saved transcript, never inference. ENTERED, UNKNOWN, malformed/partial storage, failed identity/close/fsync and unconfirmed persistence remain held. Root must ensure a single writer, including no overlapping deployment replacements; max_containers=1 is not a cross-deployment distributed lease.",
+  "limits": [
+    "No audio/transcript/token is logged; raw audio remains in RAM only. Completed transcript is stored only in the private journal Volume.",
+    "Python checks native frames and decoded aggregate before ASR, but PyAV/FFmpeg can allocate or block before returning a frame. This is not adversarial decoder containment.",
+    "Modal 2GiB memory/120s timeout are configured resource bounds, not per-native-call isolation proof. Forced termination leaves durable ENTERED.",
+    "Uploaded-body timeout relies on the host request deadline; no separate stream deadline or live upload timing qualification is claimed.",
+    "No automatic ASR retry, temperature fallback, request replay, reset or recovery endpoint.",
+    "Model quality, real codecs, Spanish/English microphone input, actual Volume durability, cold-start latency and restart recovery still require Root's supervised runtime qualification."
+  ],
+  "reconciliationFixtureScope": "Saved-completion acknowledgment/failure, descriptor/name replacement, close/fsync failures, post-ack census mutation, nonterminal and corrupt rows use RAM files and mocked syscalls/Volume only. No physical filesystem or Modal durability is established.",
+  "primarySources": [
+    "https://pypi.org/project/modal/1.5.5/",
+    "https://huggingface.co/Systran/faster-whisper-base/tree/a80717a3a48b1b28aa687bca146cb7301feae1b1",
+    "https://huggingface.co/Systran/faster-whisper-base/blob/a80717a3a48b1b28aa687bca146cb7301feae1b1/README.md",
+    "https://github.com/SYSTRAN/faster-whisper/blob/v1.2.1/faster_whisper/transcribe.py",
+    "https://github.com/SYSTRAN/faster-whisper/blob/v1.2.1/faster_whisper/audio.py",
+    "https://raw.githubusercontent.com/modal-labs/modal-client/v1.2.4/modal/image.py",
+    "https://raw.githubusercontent.com/modal-labs/modal-client/v1.2.4/modal/app.py",
+    "https://raw.githubusercontent.com/modal-labs/modal-client/v1.2.4/modal/secret.py",
+    "https://raw.githubusercontent.com/modal-labs/modal-client/v1.2.4/modal/volume.py",
+    "https://raw.githubusercontent.com/modal-labs/modal-client/v1.2.4/modal/_partial_function.py",
+    "https://modal.com/docs/guide/webhooks",
+    "https://modal.com/docs/guide/volumes",
+    "https://pyav.org/docs/stable/api/audio.html",
+    "https://pypi.org/pypi/faster-whisper/1.2.1/json",
+    "https://pypi.org/pypi/ctranslate2/4.6.0/json",
+    "https://pypi.org/pypi/av/16.0.1/json",
+    "https://pypi.org/pypi/numpy/2.2.6/json",
+    "https://pypi.org/pypi/huggingface-hub/0.36.0/json",
+    "https://pypi.org/pypi/fastapi/0.115.12/json",
+    "https://pypi.org/pypi/modal/1.2.4/json"
+  ],
+  "actualAudioModelProviderCalls": 0,
+  "deployed": false
+}

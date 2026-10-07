@@ -562,7 +562,8 @@ async function cloneFixture(t, { encrypted = false } = {}) {
   const worker = 'synthetic-clone-source';
   const contract = { ...compatibility, workerSnapshotSourceVersion: 1 };
   const revision = 'b'.repeat(40), bootstrapHash = '9'.repeat(64);
-  const currentBytes = Buffer.from('synthetic changed workspace containing all flows and portable dependencies');
+  const currentBytes = Buffer.concat([Buffer.from([0x50, 0x4b, 3, 4]),
+    Buffer.from('synthetic changed workspace containing all flows and portable dependencies')]);
   const currentHash = sha256(currentBytes), session = randomUUID();
   let wireBytes = currentBytes, wireHash = currentHash;
   const state = { calls: [], requests: [], proxies: [], events: [], discoverCalls: 0,
@@ -598,7 +599,8 @@ async function cloneFixture(t, { encrypted = false } = {}) {
       if (group === 'machine' && command === 'update') {
         machines.get(app).config = JSON.parse(await fs.readFile(value(args, '--machine-config'), 'utf8')); return '';
       }
-      if (group === 'machine' && command === 'exec') return JSON.stringify({ exit_code: 0 });
+      if (group === 'machine' && command === 'exec') return JSON.stringify({ exit_code: 0,
+        ...(args[3] === 'sha256sum /data/worker.snapshot' ? { stdout: sha256(state.uploaded) + '  /data/worker.snapshot\n' } : {}) });
       if (group === 'ssh' && command === 'sftp') { state.uploaded = await fs.readFile(args[3]); return ''; }
       throw new Error(`Unexpected synthetic command ${group} ${command}`);
     },
@@ -660,7 +662,12 @@ async function cloneFixture(t, { encrypted = false } = {}) {
         wireBytes = Buffer.from(JSON.stringify({ format: 'flujo-workspace-encrypted', version: 2,
           iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), data: data.toString('base64') }));
         wireHash = sha256(wireBytes); key.fill(0);
-      } else { assert.equal(init.body, undefined); assert.equal(init.headers['Content-Type'], undefined); }
+      } else {
+        const selection = JSON.parse(init.body);
+        assert.deepEqual(Object.keys(selection), ['recipientKey']);
+        assert.ok(/^[A-Za-z0-9+/]{43}=$/.test(selection.recipientKey));
+        assert.equal(init.headers['Content-Type'], 'application/json');
+      }
       state.events.push('snapshot:begin');
       if (state.beginUnknown) throw new Error('Synthetic begin acknowledgement lost.');
       return Response.json({ workspace: 'test-cloud', sessionId: session, state: 'beginning',
@@ -773,7 +780,9 @@ test('clone flow option changes target call default while full capture remains u
   const f = await cloneFixture(t);
   const result = await f.managed.clone(f.worker, { app: 'synthetic-clone-new-default', flowIds: ['Other Flow'], timeoutMs: 1000 });
   assert.deepEqual((await f.managed.deployment(result.worker)).journal.defaultFlowIds, ['other-flow']);
-  assert.equal(f.state.requests.find(r => r.url.pathname === '/api/snapshot/begin').init.body, undefined);
+  const selection = JSON.parse(f.state.requests.find(r => r.url.pathname === '/api/snapshot/begin').init.body);
+  assert.deepEqual(Object.keys(selection), ['recipientKey']);
+  assert.ok(/^[A-Za-z0-9+/]{43}=$/.test(selection.recipientKey));
   await f.assertPreserved(); await f.assertReleased();
 });
 

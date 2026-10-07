@@ -82,10 +82,17 @@ function captureFixture({ initial = {}, status = {}, final = {}, abort = {}, wir
   };
   return {
     requests, events, wireBytes: () => wireBytes, sentKey: () => sentKey, retainedKey: () => retainedKey,
-    run: extra => captureSnapshot({ origin: 'http://127.0.0.1:4200', workspace, token, scope: 'workspace',
-      transfer: contract(), maxBytes, timeoutMs: 1000, sleep: async () => undefined, fetchImpl,
+    run: async extra => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'cloud-v2-capture-test-'));
+      try {
+      const artifact = await captureSnapshot({ origin: 'http://127.0.0.1:4200', workspace, token, scope: 'workspace',
+      transfer: contract(), outputPath: path.join(directory, 'ciphertext'), maxBytes, timeoutMs: 1000, sleep: async () => undefined, fetchImpl,
       onRecipientKey: async key => { events.push('retain'); retainedKey = Buffer.from(key);
-        if (failRetention) throw new Error('Synthetic private retention refusal.'); }, ...extra }),
+        if (failRetention) throw new Error('Synthetic private retention refusal.'); }, ...extra });
+      assert.equal(Object.hasOwn(artifact, 'bytes'), false);
+      return { ...artifact, bytes: await fs.readFile(artifact.path), sha256: artifact.wireSha256, key: Buffer.from(retainedKey) };
+      } finally { await fs.rm(directory, { recursive: true, force: true }); }
+    },
   };
 }
 
@@ -329,4 +336,11 @@ test('ordinary selected-flow v2 capture retains selection while recipient key re
   assert.equal(result.sha256, sha256(f.wireBytes()));
   assert.deepEqual(JSON.parse(f.requests[0].init.body).flowIds, selectedFlows);
   result.key.fill(0);
+});
+
+test('negotiated v2 without a private spool is refused before retention or requests', async () => {
+  const f = captureFixture();
+  await assert.rejects(f.run({ outputPath: undefined }), /private spool/);
+  assert.equal(f.requests.length, 0);
+  assert.equal(f.events.length, 0);
 });

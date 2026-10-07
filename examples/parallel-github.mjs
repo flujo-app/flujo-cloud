@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
+import { setTimeout as delay } from 'node:timers/promises';
 import { CloudBridge, validateOptions } from '../lib/bridge.mjs';
 import { Journal } from '../lib/journal.mjs';
 
@@ -117,7 +118,15 @@ async function save(filename, value) {
   const temporary = `${filename}.next`;
   const handle = await fs.open(temporary, 'wx', 0o600);
   try { await handle.writeFile(json(value)); await handle.sync(); } finally { await handle.close(); }
-  await fs.rename(temporary, filename);
+  for (let attempt = 0; ; attempt += 1) {
+    try { await fs.rename(temporary, filename); break; }
+    catch (error) {
+      if (attempt >= 3 || !['EPERM', 'EBUSY'].includes(error.code)) throw error;
+      // Windows scanners can briefly hold a closed metadata file. Retry only
+      // its atomic rename; never repeat a flow call or erase the prior state.
+      await delay(25 * (attempt + 1));
+    }
+  }
 }
 
 export async function provision(filename, { bridge = new CloudBridge(), env = process.env, progress = () => undefined } = {}) {

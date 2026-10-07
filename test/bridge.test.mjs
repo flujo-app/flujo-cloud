@@ -12,7 +12,7 @@ import { buildPromptRequest } from '../lib/requests.mjs';
 
 const sourceToken = 'synthetic_source_control_token_0123456789';
 const workerToken = 'synthetic_worker_control_token_0123456789';
-const snapshotBytes = Buffer.from('synthetic workspace: provider credentials are test fixtures only');
+const snapshotBytes = Buffer.concat([Buffer.from([0x50, 0x4b, 3, 4]), Buffer.from('synthetic workspace: provider credentials are test fixtures only')]);
 const snapshotHash = sha256(snapshotBytes);
 const flyToken = 'synthetic_fly_api_token_0123456789';
 const env = { FLUJO_SNAPSHOT_CONTROL_TOKEN: sourceToken, FLUJO_CLOUD_CONTROL_TOKEN: workerToken, FLY_API_TOKEN: flyToken };
@@ -20,7 +20,8 @@ const sessionId = '5cbbd52a-e64c-41a3-8093-4d16656f8f8a';
 
 function json(value, status = 200) { return Response.json(value, { status }); }
 
-async function fixture(t) {
+async function fixture(t, { encryptedExport = false, recipientAck = true } = {}) {
+  let exportBytes = snapshotBytes;
   const directory = await fs.mkdtemp(path.join(tmpdir(), 'flujo-cloud-test-'));
   t.after(async () => {
     const relative = path.relative(tmpdir(), directory);
@@ -73,7 +74,7 @@ async function fixture(t) {
         return '';
       }
       if (group === 'machine' && command === 'list') return JSON.stringify(machines);
-      if (group === 'machine' && command === 'exec') return JSON.stringify(execResult);
+      if (group === 'machine' && command === 'exec') return JSON.stringify(args[3] === 'sha256sum /data/worker.snapshot' && execResult.exit_code === 0 ? { exit_code: 0, stdout: sha256(uploaded) + '  /data/worker.snapshot\n' } : execResult);
       if (group === 'ssh' && command === 'sftp') { uploaded = await fs.readFile(args[3]); return ''; }
       if (group === 'apps' && command === 'destroy') { app = undefined; machines = []; volumes = []; return ''; }
       throw new Error(`Unexpected test command: ${group} ${command}`);
@@ -96,9 +97,16 @@ async function fixture(t) {
     if (url.pathname.startsWith('/api/snapshot/')) {
       assert.equal(init.headers.Authorization, `Bearer ${sourceToken}`);
       assert.equal(init.headers['x-flujo-workspace'], options.workspace);
-      if (url.pathname.endsWith('/begin')) return json({ sessionId, workspace: options.workspace, state: 'beginning' }, 202);
-      if (url.pathname.endsWith('/status')) return json({ sessionId, workspace: options.workspace, state: 'ready', sha256: snapshotHash });
-      if (url.pathname.endsWith('/download')) return new Response(Buffer.from(snapshotBytes), { headers: { 'x-flujo-snapshot-sha256': snapshotHash } });
+      if (url.pathname.endsWith('/begin')) {
+        if (encryptedExport) {
+          const selection = JSON.parse(init.body);
+          assert.ok(/^[A-Za-z0-9+/]{43}=$/.test(selection.recipientKey));
+          exportBytes = encryptSnapshot(snapshotBytes, Buffer.from(selection.recipientKey, 'base64')).envelope;
+        }
+        return json({ sessionId, workspace: options.workspace, state: 'beginning' }, 202);
+      }
+      if (url.pathname.endsWith('/status')) return json({ sessionId, workspace: options.workspace, state: 'ready', sha256: sha256(exportBytes), ...(encryptedExport ? { encrypted: true, recipientKeyUsed: recipientAck, plaintextSha256: snapshotHash } : {}) });
+      if (url.pathname.endsWith('/download')) return new Response(Buffer.from(exportBytes), { headers: { 'x-flujo-snapshot-sha256': sha256(exportBytes), ...(encryptedExport ? { 'x-flujo-snapshot-encrypted': 'true', 'x-flujo-snapshot-recipient-key-used': String(recipientAck), 'x-flujo-snapshot-plaintext-sha256': snapshotHash } : {}) } });
       return json({ state: 'finalized' });
     }
     assert.equal(init.headers.Authorization, `Bearer ${workerToken}`);
@@ -117,7 +125,7 @@ async function fixture(t) {
   const bridge = new CloudBridge({ fly, fetchImpl, sleepImpl: async () => undefined, port: async () => 43210 });
   return {
     bridge, fly, fetchImpl, options, calls, requests, proxyCalls,
-    uploaded: () => uploaded, secretInput: () => secretInput, proxyStops: () => proxyStops,
+    exported: () => exportBytes, uploaded: () => uploaded, secretInput: () => secretInput, proxyStops: () => proxyStops,
     machines: () => machines, volumes: () => volumes,
     clearSecrets: () => { secrets = []; },
     duplicateFlowNames: () => { duplicateFlowNames = true; },
@@ -192,7 +200,10 @@ test('selected flow scope reaches snapshot begin and prevents calls outside that
   const state = await fixture(t);
   await state.bridge.up({ ...state.options, flowIds: ['flow-one', 'flow-two', 'flow-one'] }, env);
   const begin = state.requests.find((entry) => entry.url.pathname.endsWith('/begin'));
-  assert.deepEqual(JSON.parse(begin.init.body), { flowIds: ['flow-one', 'flow-two'] });
+  const selection = JSON.parse(begin.init.body);
+  assert.deepEqual(selection.flowIds, ['flow-one', 'flow-two']);
+  assert.ok(/^[A-Za-z0-9+/]{43}=$/.test(selection.recipientKey));
+  assert.deepEqual(Object.keys(selection).sort(), ['flowIds', 'recipientKey']);
   const journal = JSON.parse(await fs.readFile(state.options.journal, 'utf8'));
   assert.deepEqual(journal.flowIds, ['flow-one', 'flow-two']);
   await assert.rejects(state.bridge.call({ journal: state.options.journal, request: { model: 'unselected-flow' } }, env), /scoped to selected flows/);
@@ -358,4 +369,29 @@ test('journal rejects secret fields and serializes conflicting operations', asyn
   await journal.locked(async () => {
     await assert.rejects(journal.locked(async () => undefined), /locked/);
   });
+});
+
+
+test('recipient-encrypted Core export is uploaded byte-for-byte and worker decrypts once to the archive', async t => {
+  const state = await fixture(t, { encryptedExport: true });
+  await state.bridge.up(state.options, env);
+  assert.deepEqual(state.uploaded(), state.exported());
+  const journal = JSON.parse(await fs.readFile(state.options.journal, 'utf8'));
+  assert.equal(journal.archiveSha256, snapshotHash);
+  assert.notEqual(journal.archiveSha256, sha256(state.exported()));
+  assert.equal(state.machines()[0].config.env.FLUJO_WORKER_SNAPSHOT_SHA256, snapshotHash);
+  const line = state.secretInput().split('\n').find(line => line.startsWith('FLUJO_WORKER_SNAPSHOT_KEY='));
+  const key = Buffer.from(JSON.parse(line.slice(line.indexOf('=') + 1)), 'base64');
+  const envelope = JSON.parse(state.uploaded());
+  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(envelope.iv, 'base64'));
+  decipher.setAuthTag(Buffer.from(envelope.tag, 'base64'));
+  assert.deepEqual(Buffer.concat([decipher.update(Buffer.from(envelope.data, 'base64')), decipher.final()]), snapshotBytes);
+  assert.ok(!JSON.stringify(journal).includes(key.toString('base64')));
+});
+
+test('unknown server encryption key aborts before any Fly app/secret/upload operation', async t => {
+  const state = await fixture(t, { encryptedExport: true, recipientAck: false });
+  await assert.rejects(state.bridge.up(state.options, env), /acknowledged recipient key/);
+  assert.equal(state.calls.length, 0);
+  assert.equal(state.requests.at(-1).url.pathname, '/api/snapshot/abort');
 });

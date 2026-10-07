@@ -90,7 +90,16 @@ test('run dispatches three calls concurrently once, audits exact comments, and f
   await provision(state.prepared.plan, { bridge: state.bridge, env: {} });
   let started = 0;
   let release;
-  const allStarted = new Promise((resolve) => { release = resolve; });
+  let barrierTimer;
+  const allStarted = new Promise((resolve, reject) => {
+    release = () => { clearTimeout(barrierTimer); resolve(); };
+    // Keep this test alive and fail clearly if one dispatch never enters the
+    // mock. An unresolved Promise alone lets Node cancel this and later tests.
+    barrierTimer = setTimeout(() => reject(new Error(`Only ${started} of 3 calls entered the concurrency barrier.`)), 5000);
+  });
+  // If run rejects before the mock enters, cleanup still releases the handle.
+  allStarted.catch(() => undefined);
+  t.after(() => clearTimeout(barrierTimer));
   const comments = [];
   const bridge = { async call(options) {
     started += 1;
@@ -120,6 +129,47 @@ test('run dispatches three calls concurrently once, audits exact comments, and f
   await assert.rejects(run(state.prepared.plan, { bridge, fetchImpl, env: {} }), /already dispatched/);
   assert.equal(started, 3);
 });
+
+for (const persistent of [false, true]) {
+  test(`${persistent ? 'persistent' : 'transient'} metadata rename refusal never repeats flow calls`, async t => {
+    const state = await fixture(t);
+    await provision(state.prepared.plan, { bridge: state.bridge, env: {} });
+    const blocked = path.join(state.directory, state.plan.workers[0].callState);
+    const originalRename = fs.rename;
+    let renameAttempts = 0;
+    fs.rename = async (source, destination) => {
+      if (destination === blocked) {
+        renameAttempts += 1;
+        if (persistent || renameAttempts === 1) throw Object.assign(new Error('Synthetic metadata sharing violation'), { code: 'EPERM' });
+      }
+      return originalRename(source, destination);
+    };
+    t.after(() => { fs.rename = originalRename; });
+    const calls = [], comments = [];
+    const bridge = { async call(options) {
+      const worker = state.plan.workers.find(candidate => options.journal.endsWith(candidate.journal));
+      calls.push(worker.index);
+      comments.push({ id: worker.index, body: worker.commentBody, html_url: `${state.plan.target.url}#issuecomment-${worker.index}` });
+      return { body: '{}' };
+    } };
+    const result = await run(state.prepared.plan, { bridge, fetchImpl: async () => Response.json(comments), env: {} });
+    assert.equal(new Set(calls).size, calls.length);
+    if (persistent) {
+      assert.equal(renameAttempts, 4);
+      assert.deepEqual(calls.sort(), [2, 3]);
+      assert.equal(result.passed, false);
+      assert.equal(result.calls[0].state, 'needs-reconciliation');
+      assert.equal(JSON.parse(await fs.readFile(blocked, 'utf8')).state, 'reserved');
+      assert.ok(await fs.stat(`${blocked}.next`));
+    } else {
+      assert.deepEqual(calls.sort(), [1, 2, 3]);
+      assert.equal(result.passed, true);
+      assert.equal(renameAttempts, 3); // refused dispatch, successful dispatch, successful response metadata
+    }
+    await assert.rejects(run(state.prepared.plan, { bridge, fetchImpl: async () => Response.json(comments), env: {} }), /already dispatched/);
+    assert.equal(calls.length, persistent ? 2 : 3);
+  });
+}
 
 test('pre-existing marker prevents all flow calls and duplicate audit remains read-only', async (t) => {
   const state = await fixture(t);

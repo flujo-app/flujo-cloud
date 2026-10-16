@@ -15,6 +15,8 @@ up --workspace NAME [--flow ID_OR_NAME ...]
    [--source URL] [--org SLUG] [--region iad] [--app NEW_NAME]
    [--memory-mb 2048] [--volume-gb 2] [--timeout-seconds 600]
 list                            List managed deployment records.
+inspect WORKER                   Observe ready worker flows, models and MCP metadata.
+   [--timeout-seconds 30]        Authenticated GETs; no flow or tool execution.
 clone WORKER [--app NEW_NAME]    Clone an owned ready private workspace in cloud.
    [--flow ID_OR_NAME ...] [--org SLUG] [--region iad]
 call WORKER --prompt TEXT        Run the worker's single selected flow.
@@ -63,19 +65,23 @@ try {
     process.stdout.write(help);
   } else {
     const command = positionals[0];
-    if (!['sources', 'workspaces', 'preflight', 'up', 'clone', 'list', 'call', 'down'].includes(command)
-      || positionals.length > (['clone', 'call', 'down'].includes(command) && !values.journal ? 2 : 1)) throw new Error('Invalid command. Use --help for usage.');
+    if (!['sources', 'workspaces', 'preflight', 'up', 'clone', 'list', 'inspect', 'call', 'down'].includes(command)
+      || positionals.length > (['clone', 'inspect', 'call', 'down'].includes(command) && !values.journal ? 2 : 1)) throw new Error('Invalid command. Use --help for usage.');
+    if (command === 'inspect' && (positionals.length !== 2 || Object.keys(values).some(key => key !== 'timeout-seconds'))) {
+      throw new Error('inspect requires one saved worker ID and supports only --timeout-seconds.');
+    }
     if (values.profile !== undefined && !['preflight', 'up'].includes(command)) throw new Error('--profile is only supported for preflight and new up deployments.');
     const progress = (message) => process.stderr.write(`${message}\n`);
     const managed = new ManagedCloud({ progress });
     const operator = Boolean(values.journal);
     if (operator && !['up', 'call', 'down'].includes(command)) throw new Error('--journal is only supported with up, call or down.');
     const bridge = operator ? new CloudBridge({ progress }) : null;
-    const timeoutMs = Number(values['timeout-seconds'] ?? 600) * 1000;
+    const timeoutMs = Number(values['timeout-seconds'] ?? (command === 'inspect' ? 30 : 600)) * 1000;
     let result;
     if (command === 'sources') result = await managed.sources();
     else if (command === 'workspaces') result = await managed.workspaces({ source: values.source });
     else if (command === 'list') result = await managed.list();
+    else if (command === 'inspect') result = await managed.inspect(positionals[1], { timeoutMs });
     else if (command === 'up' || command === 'preflight' || command === 'clone') {
       const options = {
         app: values.app, org: values.org, region: values.region, workspace: values.workspace,

@@ -175,6 +175,23 @@ Calls execute the configured flow tools unattended, using FLUJO's completion API
 
 Check actual results and external effects. If a request times out after a possible write, inspect its durable conversation and external outcome before retrying. A new `call` is a new dispatch; the generic CLI does not provide exactly-once execution or automatically replay uncertain requests. The [parallel GitHub acceptance helper](operator-guide.md#6-run-the-three-worker-github-acceptance-example) adds durable reservations and comment-marker audits for that particular test.
 
+## Inspect an owned worker
+
+Use the worker ID returned by `up`, `clone` or `list` to read the current remote configuration:
+
+```text
+node bin/flujo-cloud.mjs inspect WORKER
+node bin/flujo-cloud.mjs inspect WORKER --timeout-seconds 60
+```
+
+The managed command writes its JSON report to stdout. The HTTP observation deadline `--timeout-seconds` defaults to 30 and cannot exceed 120; Fly ownership checks and proxy shutdown keep their existing separate bounded timeouts. It uses the existing saved credential, verifies the owned ready Machine, and opens its Machine-specific private loopback proxy. Authenticated worker status is read first, followed by flow, model and MCP-server GETs over that same proxy. Only an initial status connection failure may repeat that GET, at most three attempts while the proxy starts; HTTP refusals and inventory requests are never retried. Inspection needs no local FLUJO discovery and accepts no arbitrary remote source. It does not create resources, start a stopped worker, POST a completion or invoke a provider.
+
+`list` reports local deployment records, including incomplete attempts. `inspect` samples the existing worker's metadata; these reads are sequential observations, not an atomic workspace snapshot. The report projects bounded whitelists for flow graph nodes/edges, model metadata and MCP servers. Missing endpoints or bounded/truncated collections are reported as unavailable or truncated rather than complete. Observed flow IDs, journal-callable selections and defaults remain separate: an observed legacy flow is not automatically admitted for `call`, while private-workspace defaults do not restrict the full restored workspace.
+
+A graph or reported connection status does not prove model authorization, MCP execution, continuous health, provider/OFF authority or an accepted task. The report omits credential/configuration bodies and prompts, but names and labels may still be private. Keep stdout captures and the underlying deployment records in private storage outside Git and portable handoffs.
+
+Inspection takes temporary managed and operator locks and owns a local proxy child. A timeout or unavailable metadata does not authorize a restart or retry of uncertain work. If proxy closure or lock release is unconfirmed, the command retains its reconciliation fence, preserves the original outcome and does not report success or replay automatically. Existing or replaced locks are preserved; absent locks are not recreated as evidence. Reconcile the original operation before removing a fence or retrying.
+
 ## 6. Keep track and clean up
 
 ```text

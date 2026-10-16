@@ -74,6 +74,21 @@ The source must already be ready under this explicit profile. Legacy/operator wo
 
 If the target's journal release or metadata binding is uncertain, its own managed fence remains even when the Bridge's observed ready result is retained. That observation does not confirm a later metadata write or changed journal. The original error and target outcome survive a second source-lock cleanup failure too; confirmed source cleanup can release its separate locks. The target cannot be called, cloned or retired until that hold is reconciled.
 
+## Inspect a managed worker
+
+Read the current configuration of an already owned, ready worker:
+
+```text
+node bin/flujo-cloud.mjs inspect WORKER
+node bin/flujo-cloud.mjs inspect WORKER --timeout-seconds 60
+```
+
+The command writes JSON to stdout. Its HTTP observation deadline defaults to 30 seconds, with a maximum of 120 seconds; Fly ownership checks and proxy shutdown use their existing separate bounded timeouts. It uses the saved credential and an exact Machine private proxy to read authenticated worker status, then flow, model and MCP-server metadata. Only an initial status connection failure may repeat that GET, at most three attempts while the proxy starts. It does not provision or start a worker, submit a flow or call a provider. `list` reads local deployment records; `inspect` reads the existing worker.
+
+The bounded report contains whitelisted graph nodes/edges and model/server metadata. Unavailable or truncated data is explicit. Observed flows are separate from journal-permitted calls and selected defaults, especially for legacy flow workers. Metadata and connection-status labels do not qualify tool execution, provider authorization, health or OFF authority. Labels can still be private; keep reports and deployment records outside Git and portable handoffs.
+
+Inspection holds temporary managed/operator locks and a private proxy process. Unconfirmed cleanup retains the reconciliation fence and prevents a success report or automatic replay. See [inspection and recovery](docs/deployment.md#inspect-an-owned-worker).
+
 ## Documentation
 
 ### Recipient-encrypted native snapshots

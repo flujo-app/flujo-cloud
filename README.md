@@ -1,5 +1,10 @@
 # flujo-cloud
 
+Version 0.2.0 combines recipient-encrypted workspace transfer with the existing
+owned proxy and private Worker network contracts. Install the versioned GitHub
+release tarball; no registry credentials or source checkout are needed. Its local
+tests use synthetic provider transports and do not provision paid resources.
+
 Run an existing FLUJO flow on a private Fly Machine. The CLI discovers your local FLUJO instance, selects a compatible official worker image, clones the workspace and manages the worker's control credentials. Your flow uses FLUJO's existing models, conversations, execution engine and portable MCP installations.
 
 ## Get started

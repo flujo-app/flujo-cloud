@@ -1,9 +1,11 @@
 {
   "name": "flujo-cloud",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Private Fly Machines bridge for FLUJO workspace workers",
+  "description": "Fly Machines SDK for private FLUJO workspace workers",
+  "repository": { "type": "git", "url": "https://github.com/flujo-app/flujo-cloud.git" },
+  "files": ["lib/", "bin/", "README.md", "docs/"],
   "engines": { "node": ">=22" },
   "bin": { "flujo-cloud": "bin/flujo-cloud.mjs" },
   "exports": { ".": "./lib/managed.mjs", "./bridge": "./lib/bridge.mjs" },

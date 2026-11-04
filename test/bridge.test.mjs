@@ -100,7 +100,12 @@ async function fixture(t, { encryptedExport = false, recipientAck = true } = {})
         return '';
       }
       if (group === 'machine' && command === 'list') return JSON.stringify(machines);
-      if (group === 'machine' && command === 'exec') return JSON.stringify(args[3] === 'sha256sum /data/worker.snapshot' && execResult.exit_code === 0 ? { exit_code: 0, stdout: sha256(uploaded) + '  /data/worker.snapshot\n' } : execResult);
+      if (group === 'machine' && command === 'exec') {
+        const result = args[3] === 'sha256sum /data/worker.snapshot' && execResult.exit_code === 0 ? { exit_code: 0, stdout: sha256(uploaded) + '  /data/worker.snapshot\n' } : execResult;
+        // Current flyctl leaves out exit_code when the command succeeds.
+        if (execResult.omitExitCode) { const { exit_code: _omitted, ...rest } = result; return JSON.stringify(rest); }
+        return JSON.stringify(result);
+      }
       if (group === 'ssh' && command === 'sftp') { uploaded = await fs.readFile(args[3]); return ''; }
       if (group === 'apps' && command === 'destroy') { app = undefined; machines = []; volumes = []; return ''; }
       throw new Error(`Unexpected test command: ${group} ${command}`);
@@ -345,6 +350,15 @@ test('wrong resolved image digest blocks upload while owned cleanup remains avai
   assert.equal(state.uploaded(), undefined);
   const journal = JSON.parse(await fs.readFile(state.options.journal, 'utf8'));
   assert.equal(journal.machineId, 'ab1234cd5678');
+  assert.equal((await state.bridge.down({ journal: state.options.journal })).state, 'destroyed');
+});
+
+test('a successful machine exec without an exit code still verifies the upload', async (t) => {
+  const state = await fixture(t);
+  state.setExecResult({ exit_code: 0, omitExitCode: true });
+  const result = await state.bridge.up(state.options, env);
+  assert.equal(result.state, 'ready');
+  assert.ok(state.uploaded());
   assert.equal((await state.bridge.down({ journal: state.options.journal })).state, 'destroyed');
 });
 

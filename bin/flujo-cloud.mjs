@@ -13,10 +13,12 @@ preflight --workspace NAME      Verify setup and compatible official image.
 up --workspace NAME [--flow ID_OR_NAME ...]
    [--profile flow|private-workspace]
    [--source URL] [--org SLUG] [--region iad] [--app NEW_NAME]
-   [--memory-mb 2048] [--volume-gb 2] [--timeout-seconds 600]
+   [--cpu-kind shared|performance] [--memory-mb 2048] [--volume-gb 2]
+   [--timeout-seconds 600]
 list                            List managed deployment records.
 clone WORKER [--app NEW_NAME]    Clone an owned ready private workspace in cloud.
    [--flow ID_OR_NAME ...] [--org SLUG] [--region iad]
+   [--cpu-kind shared|performance]
 call WORKER --prompt TEXT        Run the worker's single selected flow.
 call WORKER --request FILE [--conversation-id ID] [--timeout-seconds 600]
 down WORKER                     Remove the owned deployment and saved credential.
@@ -29,6 +31,8 @@ and external actions you have authorized. Prompts append a new conversation turn
 private-workspace captures the whole workspace; --flow only selects call defaults.
 It requires a checked official capability image and creates a new always-on worker.
 Existing workers keep their recorded profile; no model replay/dedup is provided.
+--cpu-kind performance gives the worker two unthrottled CPUs and at least 4096 MiB,
+at about five times the running price of shared CPUs. A clone keeps its source's kind.
 clone keeps the source intact, captures all dependencies over its owned private
 proxy, and creates a fresh private-workspace target. It has no --journal/--source
 or credential override; legacy workers are not adopted or upgraded.
@@ -54,7 +58,7 @@ try {
     allowPositionals: true,
     options: Object.fromEntries([
       'app', 'org', 'region', 'workspace', 'image', 'journal', 'source', 'auth-state', 'profile',
-      'memory-mb', 'volume-gb', 'timeout-seconds', 'max-snapshot-mib', 'request', 'conversation-id', 'flows', 'channel', 'prompt',
+      'cpu-kind', 'memory-mb', 'volume-gb', 'timeout-seconds', 'max-snapshot-mib', 'request', 'conversation-id', 'flows', 'channel', 'prompt',
     ].map((name) => [name, { type: 'string' }]).concat([
       ['flow', { type: 'string', multiple: true }], ['help', { type: 'boolean', short: 'h' }],
     ])),
@@ -82,7 +86,7 @@ try {
         image: values.image, journal: values.journal, source: values.source, authState: values['auth-state'],
         profile: values.profile,
         channel: values.channel,
-        memoryMb: values['memory-mb'], volumeGb: values['volume-gb'], timeoutMs,
+        cpuKind: values['cpu-kind'], memoryMb: values['memory-mb'], volumeGb: values['volume-gb'], timeoutMs,
         maxSnapshotBytes: Number(values['max-snapshot-mib'] ?? 256) * 1024 * 1024,
         flowIds: [...(values.flow ?? []), ...(values.flows ? values.flows.split(',').map((value) => value.trim()) : [])],
       };

@@ -920,3 +920,51 @@ test('unknown server encryption key aborts before any Fly app/secret/upload oper
   assert.equal(state.calls.length, 0);
   assert.equal(state.requests.at(-1).url.pathname, '/api/snapshot/abort');
 });
+
+test('CPU kind stays shared unless chosen, and memory must fit the kind before any provisioning', async t => {
+  const state = await fixture(t);
+  const options = state.options;
+  assert.deepEqual([validateOptions(options).cpuKind, validateOptions(options).memoryMb], ['shared', 2048]);
+  assert.equal(validateOptions({ ...options, cpuKind: null }).cpuKind, 'shared');
+  assert.equal(validateOptions({ ...options, cpuKind: 'performance' }).memoryMb, 4096);
+  for (const [cpuKind, memoryMb] of [['shared', 1024], ['shared', '2304'], ['shared', 4096],
+    ['performance', 4096], ['performance', '8192'], ['performance', 16384]]) {
+    assert.equal(validateOptions({ ...options, cpuKind, memoryMb }).memoryMb, Number(memoryMb));
+  }
+  for (const cpuKind of ['dedicated', '', 2, ['shared']]) {
+    assert.throws(() => validateOptions({ ...options, cpuKind }), /--cpu-kind must be shared or performance/);
+  }
+  assert.throws(() => validateOptions({ ...options, memoryMb: 8192 }),
+    /--memory-mb must be 1024 to 4096 in steps of 256 with shared CPUs; performance CPUs \(--cpu-kind\) take 4096 to 16384/);
+  for (const [cpuKind, memoryMb] of [['shared', 512], ['shared', 1100], ['performance', 2048],
+    ['performance', 5120], ['performance', 18432]]) {
+    assert.throws(() => validateOptions({ ...options, cpuKind, memoryMb }), /memory/i);
+  }
+  await assert.rejects(state.bridge.up({ ...options, cpuKind: 'performance', memoryMb: 2048 }, env),
+    /--memory-mb must be 4096 to 16384 in steps of 2048 with performance CPUs/);
+  await assert.rejects(state.bridge.up({ ...options, cpuKind: 'dedicated' }, env), /--cpu-kind/);
+  assert.equal(state.calls.length, 0);
+  assert.equal(state.requests.length, 0);
+});
+
+test('the chosen CPU kind sizes the idle and the active Machine and is kept in the journal', async t => {
+  for (const [chosen, guest] of [[{}, { cpu_kind: 'shared', cpus: 2, memory_mb: 2048 }],
+    [{ cpuKind: 'performance' }, { cpu_kind: 'performance', cpus: 2, memory_mb: 4096 }],
+    [{ cpuKind: 'performance', memoryMb: 8192 }, { cpu_kind: 'performance', cpus: 2, memory_mb: 8192 }]]) {
+    const state = await fixture(t);
+    await state.bridge.up({ ...state.options, ...chosen }, env);
+    const creation = state.requests.find(entry => entry.url.origin === 'https://api.machines.dev');
+    const idle = JSON.parse(creation.init.body).config;
+    assert.deepEqual(idle.init.cmd, ['sleep', 'infinity']);
+    assert.deepEqual(idle.guest, guest);
+    assert.ok(state.machines()[0].config.init.cmd.includes('::'));
+    assert.deepEqual(state.machines()[0].config.guest, guest);
+    const journal = JSON.parse(await fs.readFile(state.options.journal, 'utf8'));
+    assert.equal(journal.cpuKind, guest.cpu_kind);
+    assert.equal(buildMachineConfig(journal, { idle: false }).guest.cpu_kind, guest.cpu_kind);
+    // A journal written before the CPU kind existed describes a shared-CPU worker.
+    const { cpuKind: _kind, ...earlier } = journal;
+    assert.deepEqual(buildMachineConfig(earlier, { idle: false }).guest, { cpu_kind: 'shared', cpus: 2, memory_mb: 2048 });
+    assert.throws(() => buildMachineConfig(journal, { idle: false, cpuKind: 'dedicated' }), /--cpu-kind/);
+  }
+});

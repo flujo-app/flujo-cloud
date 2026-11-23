@@ -1,6 +1,7 @@
 # flujo-cloud
 
-Version 0.2.0 combines recipient-encrypted workspace transfer with the existing
+Version 0.3.0 adds a choice of CPU kind for a worker (`--cpu-kind`, `cpuKind` in
+the SDK) to recipient-encrypted workspace transfer and the existing
 owned proxy and private Worker network contracts. Install the versioned GitHub
 release tarball; no registry credentials or source checkout are needed. Its local
 tests use synthetic provider transports and do not provision paid resources.

@@ -1445,3 +1445,38 @@ test('target reconciliation result survives missing or replaced source journal-l
     });
   }
 });
+
+test('managed preflight, deployment record, result and inventory carry the chosen CPU kind', async t => {
+  const { managed, state, input } = await fixture(t);
+  assert.equal((await managed.preflight(input)).cpuKind, 'shared');
+  assert.equal((await managed.preflight({ ...input, cpuKind: 'performance' })).cpuKind, 'performance');
+  await assert.rejects(managed.preflight({ ...input, cpuKind: 'performance', memoryMb: 2048 }), /--memory-mb must be 4096 to 16384/);
+  await assert.rejects(managed.up({ ...input, cpuKind: 'dedicated' }), /--cpu-kind/);
+  assert.ok(!state.calls.some(call => call.up));
+  const result = await managed.up({ ...input, cpuKind: 'performance' });
+  assert.equal(result.cpuKind, 'performance');
+  const up = state.calls.find(call => call.up).up;
+  assert.deepEqual([up.cpuKind, up.memoryMb], ['performance', 4096]);
+  assert.equal((await readPrivateJson(managed.paths(result.worker).metadata)).cpuKind, 'performance');
+  assert.equal((await managed.list())[0].cpuKind, 'performance');
+});
+
+test('a clone keeps the CPU kind of its source unless the caller chooses another', async t => {
+  const kept = await cloneFixture(t);
+  await new Journal(kept.files.journal).save({ ...await new Journal(kept.files.journal).read(), cpuKind: 'performance' });
+  const same = await kept.managed.clone(kept.worker, { app: 'synthetic-clone-keeps-kind', timeoutMs: 1000 });
+  assert.equal(same.cpuKind, 'performance');
+  const target = await kept.managed.deployment(same.worker);
+  assert.deepEqual([target.journal.cpuKind, target.metadata.cpuKind], ['performance', 'performance']);
+
+  const changed = await cloneFixture(t);
+  await new Journal(changed.files.journal).save({ ...await new Journal(changed.files.journal).read(), cpuKind: 'performance' });
+  const other = await changed.managed.clone(changed.worker, { app: 'synthetic-clone-other-kind', cpuKind: 'shared', timeoutMs: 1000 });
+  assert.equal(other.cpuKind, 'shared');
+  assert.equal((await changed.managed.deployment(other.worker)).journal.cpuKind, 'shared');
+
+  const earlier = await cloneFixture(t);
+  const { cpuKind: _kind, ...withoutKind } = await new Journal(earlier.files.journal).read();
+  await new Journal(earlier.files.journal).save(withoutKind);
+  assert.equal((await earlier.managed.clone(earlier.worker, { app: 'synthetic-clone-earlier-kind', timeoutMs: 1000 })).cpuKind, 'shared');
+});
